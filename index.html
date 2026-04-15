@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Attendly Pro - V39.1 Personnel, Time & Break Tracking</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2318181b' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 11.08V12a10 10 0 1 1-5.93-9.14'/%3E%3Cpolyline points='22 4 12 14.01 9 11.01'/%3E%3C/svg%3E">
+    <title>RevCentric Solutions</title>
+    <link rel="icon" type="image/png" href="logo.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
@@ -23,7 +23,7 @@
 
         const getISTDateObject = (date = new Date()) => {
             const s = getISTString(date);
-            const [y, m, d] = s.split('-').map(Number);
+            const[y, m, d] = s.split('-').map(Number);
             return new Date(y, m - 1, d);
         };
 
@@ -1729,7 +1729,8 @@
     }
 </script>
 
-    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     
     <style>
@@ -1772,17 +1773,21 @@
         </div>
     </div>
 
-    <nav class="flex flex-col md:flex-row shrink-0 items-center justify-between px-4 md:px-10 py-3 md:py-5 bg-zinc-950 border-b border-zinc-800 z-[2000] gap-4">
+    <!-- UPDATE 1: Replaced background colors and updated logo setup for RevCentric -->
+    <nav class="flex flex-col md:flex-row shrink-0 items-center justify-between px-4 md:px-10 py-3 md:py-5 bg-[#0f4c81] border-b border-[#0d406d] z-[2000] gap-4">
         <div class="flex items-center justify-between w-full md:w-auto">
-            <div class="flex items-center gap-3">
-                <div class="w-8 h-8 md:w-10 md:h-10 rounded-xl bg-white flex items-center justify-center shadow-lg"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" class="text-zinc-950 md:w-[22px] md:h-[22px]"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
-                <h1 class="text-xl md:text-2xl font-black tracking-tighter text-white">Attendly</h1>
+            <div class="flex items-center gap-3 bg-white p-1.5 rounded-xl shadow-lg pr-4">
+                <!-- Replace 'logo.png' below with your actual hosted logo URL -->
+                <img src="logo.png" alt="RevCentric Solutions" class="h-8 md:h-10 object-contain" onerror="this.style.display='none';">
+                <h1 class="text-xl md:text-2xl font-black tracking-tighter text-[#f26522]">
+  <span class="text-[#0f4c81]">Rev</span>Centric <span class="text-[#0f4c81]">Solutions</span>
+</h1>
             </div>
             <div class="flex items-center gap-3 md:hidden">
-                <div class="flex items-center px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-full transition-colors" :class="syncError ? 'bg-rose-950/40 border-rose-900/50' : ''">
+                <div class="flex items-center px-3 py-1 bg-black/20 border border-white/5 rounded-full transition-colors" :class="syncError ? 'bg-rose-950/40 border-rose-900/50' : ''">
                     <span class="cloud-indicator m-0" :class="syncError ? 'bg-rose-500' : (isSyncing ? 'status-syncing' : 'status-synced')"></span>
                 </div>
-                <button x-show="isAdminAuthenticated || isManagerOrLead" @click="showNotifications = !showNotifications" class="relative w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+                <button x-show="isAdminAuthenticated || isManagerOrLead" @click="showNotifications = !showNotifications" class="relative w-8 h-8 flex items-center justify-center text-white/70 hover:text-white transition-colors">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
                     <span x-show="(pendingLeaveCount + todayEvents.length) > 0" class="absolute top-0 right-0 w-3.5 h-3.5 bg-rose-600 text-white text-[8px] font-black rounded-full flex items-center justify-center border border-zinc-950" x-text="pendingLeaveCount + todayEvents.length"></span>
                 </button>
@@ -1791,10 +1796,11 @@
         </div>
         
         <div class="flex items-center bg-white/5 p-1 rounded-2xl border border-white/5 w-full md:w-auto overflow-x-auto no-scrollbar">
+            <!-- UPDATE 1: Active item color matches RevCentric Orange and inactive text is transparent white -->
             <template x-for="item in menuItems" :key="item.id">
                 <button x-show="!item.admin || isManagerOrLead || members.length === 0" 
                         @click="view = item.id; resetMemberForm()" 
-                        :class="view === item.id ? 'bg-white text-zinc-950 shadow-2xl' : 'text-zinc-500 hover:text-zinc-300'" 
+                        :class="view === item.id ? 'bg-[#f26522] text-white shadow-2xl' : 'text-white/70 hover:text-white'" 
                         class="px-4 md:px-6 py-2 md:py-2.5 rounded-xl transition-all font-bold text-[13px] md:text-[14px] flex items-center gap-2 whitespace-nowrap">
                     <span x-html="item.icon" class="scale-90 md:scale-100"></span><span x-text="item.label" class="hidden sm:inline"></span>
                 </button>
@@ -1802,13 +1808,13 @@
         </div>
         
         <div class="hidden md:flex items-center gap-4">
-            <div class="flex items-center px-4 py-1.5 bg-zinc-900 border border-zinc-800 rounded-full transition-colors" :class="syncError ? 'bg-rose-950/40 border-rose-900/50' : ''">
+            <div class="flex items-center px-4 py-1.5 bg-black/20 border border-white/5 rounded-full transition-colors" :class="syncError ? 'bg-rose-950/40 border-rose-900/50' : ''">
                 <span class="cloud-indicator" :class="syncError ? 'bg-rose-500' : (isSyncing ? 'status-syncing' : 'status-synced')"></span>
-                <p class="text-[10px] font-black uppercase tracking-widest transition-colors" :class="syncError ? 'text-rose-400' : 'text-zinc-500'" x-text="syncError ? 'OFFLINE' : (isSyncing ? 'SYNC' : 'ACTIVE')"></p>
+                <p class="text-[10px] font-black uppercase tracking-widest transition-colors" :class="syncError ? 'text-rose-400' : 'text-white/70'" x-text="syncError ? 'OFFLINE' : (isSyncing ? 'SYNC' : 'ACTIVE')"></p>
             </div>
-            <button x-show="isAdminAuthenticated || isManagerOrLead" @click="showNotifications = !showNotifications" class="relative w-10 h-10 flex items-center justify-center text-zinc-400 hover:text-white transition-colors">
+            <button x-show="isAdminAuthenticated || isManagerOrLead" @click="showNotifications = !showNotifications" class="relative w-10 h-10 flex items-center justify-center text-white/70 hover:text-white transition-colors">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-                <span x-show="(pendingLeaveCount + todayEvents.length) > 0" class="absolute top-1 right-1 w-4 h-4 bg-rose-600 text-white text-[9px] font-black rounded-full flex items-center justify-center border-2 border-zinc-950" x-text="pendingLeaveCount + todayEvents.length"></span>
+                <span x-show="(pendingLeaveCount + todayEvents.length) > 0" class="absolute top-1 right-1 w-4 h-4 bg-rose-600 text-white text-[9px] font-black rounded-full flex items-center justify-center border-2 border-[#0f4c81]" x-text="pendingLeaveCount + todayEvents.length"></span>
             </button>
             <button x-show="isAdminAuthenticated" @click="logoutAdmin()" class="px-4 py-1.5 bg-rose-500 text-white rounded-full text-[10px] font-black uppercase shadow-xl">Lock Vault</button>
         </div>
@@ -2329,18 +2335,18 @@
                                                 </div>
                                                 
                                                 <div @click="adminToggleBreak(m.id)" 
-         class="flex-1 border rounded-2xl p-2 flex flex-col items-center justify-center transition-all cursor-pointer hover:scale-105 active:scale-95"
-         :class="isMemberOnBreak(m.id, currentDate) ? 'bg-amber-500 border-amber-600 shadow-md text-white' : 'bg-amber-50 border-amber-200 hover:bg-amber-100'"
-         title="Admin Override: Click to Start/Stop Break">
-        <span class="text-[8px] font-black uppercase tracking-[0.2em] mb-1 flex items-center" 
-              :class="isMemberOnBreak(m.id, currentDate) ? 'text-amber-100' : 'text-amber-600'">
-            <span x-show="isMemberOnBreak(m.id, currentDate)" class="inline-block w-1.5 h-1.5 bg-white rounded-full animate-pulse mr-1 mb-[1px]"></span>
-            <span x-text="isMemberOnBreak(m.id, currentDate) ? 'END BREAK' : 'START BREAK'"></span>
-        </span>
-        <span class="font-black text-xs" 
-              :class="isMemberOnBreak(m.id, currentDate) ? 'text-white' : 'text-amber-700'" 
-              x-text="(calculateTotalBreakMins(punchLogs[currentDate]?.[m.id]?.breaks) || 0) + 'm'"></span>
-    </div>
+                                                     class="flex-1 border rounded-2xl p-2 flex flex-col items-center justify-center transition-all cursor-pointer hover:scale-105 active:scale-95"
+                                                     :class="isMemberOnBreak(m.id, currentDate) ? 'bg-amber-500 border-amber-600 shadow-md text-white' : 'bg-amber-50 border-amber-200 hover:bg-amber-100'"
+                                                     title="Admin Override: Click to Start/Stop Break">
+                                                    <span class="text-[8px] font-black uppercase tracking-[0.2em] mb-1 flex items-center" 
+                                                          :class="isMemberOnBreak(m.id, currentDate) ? 'text-amber-100' : 'text-amber-600'">
+                                                        <span x-show="isMemberOnBreak(m.id, currentDate)" class="inline-block w-1.5 h-1.5 bg-white rounded-full animate-pulse mr-1 mb-[1px]"></span>
+                                                        <span x-text="isMemberOnBreak(m.id, currentDate) ? 'END BREAK' : 'START BREAK'"></span>
+                                                    </span>
+                                                    <span class="font-black text-xs" 
+                                                          :class="isMemberOnBreak(m.id, currentDate) ? 'text-white' : 'text-amber-700'" 
+                                                          x-text="(calculateTotalBreakMins(punchLogs[currentDate]?.[m.id]?.breaks) || 0) + 'm'"></span>
+                                                </div>
                                                 
                                                 <div class="flex-1 bg-zinc-50 border border-zinc-100 rounded-2xl p-2 flex flex-col items-center justify-center transition-colors" :class="editingLogId === m.id ? 'focus-within:ring-2 focus-within:ring-zinc-400' : 'opacity-60 bg-zinc-100/50'">
                                                     <span class="text-[8px] font-black text-zinc-400 uppercase tracking-[0.2em] mb-1">Punch Out</span>
@@ -2380,39 +2386,46 @@
                                             </div>
                                         </div>
 
-                                        <div class="w-full pt-4 border-t border-zinc-100" x-show="punchLogs[currentDate]?.[m.id]?.breaks && punchLogs[currentDate]?.[m.id]?.breaks.length > 0">
-                                            <div class="bg-amber-50/40 rounded-[1.25rem] border border-amber-200/50 w-full overflow-hidden flex flex-col relative">
-                                                <div class="px-5 py-3 bg-amber-100/50 border-b border-amber-200/50 flex items-center justify-between">
+                                        <!-- UPDATE 2: Refactored Collapsible Break Timeline -->
+                                        <div class="w-full pt-4 border-t border-zinc-100" x-show="punchLogs[currentDate]?.[m.id]?.breaks && punchLogs[currentDate]?.[m.id]?.breaks.length > 0" x-data="{ showBreaks: false }">
+                                            <div class="bg-amber-50/40 rounded-[1.25rem] border border-amber-200/50 w-full overflow-hidden flex flex-col relative transition-all duration-300">
+                                                
+                                                <div @click="showBreaks = !showBreaks" class="px-5 py-3 bg-amber-100/50 hover:bg-amber-200/50 transition-colors cursor-pointer border-b border-amber-200/50 flex items-center justify-between select-none">
                                                     <span class="text-[10px] font-black uppercase text-amber-800 tracking-widest flex items-center gap-2">
                                                         <span class="w-2 h-2 rounded-full bg-amber-500 shadow-sm"></span>
                                                         Break Activity Timeline
+                                                        <svg :class="showBreaks ? 'rotate-180' : ''" class="w-4 h-4 ml-1 transition-transform duration-300 text-amber-600" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path></svg>
                                                     </span>
                                                     <span class="text-[10px] font-black uppercase text-amber-700 bg-white px-3 py-1 rounded-lg shadow-sm border border-amber-200" x-text="calculateTotalBreakMins(punchLogs[currentDate]?.[m.id]?.breaks) + ' Mins Total'"></span>
                                                 </div>
                                                 
-                                                <div class="p-5 flex items-center gap-4 overflow-x-auto custom-scrollbar relative">
-                                                    <div class="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-0.5 bg-amber-200/50 z-0"></div>
-                                                    
-                                                    <template x-for="(brk, bIdx) in punchLogs[currentDate]?.[m.id]?.breaks" :key="bIdx">
-                                                        <div class="relative z-10 flex flex-col bg-white border-2 border-amber-200 rounded-[1rem] shadow-sm min-w-[160px] transition-transform hover:-translate-y-1 hover:shadow-lg">
-                                                            <div class="px-4 py-2 border-b border-amber-100 bg-amber-50/50 flex items-center justify-between rounded-t-[14px]">
-                                                                <span class="text-[9px] font-black uppercase text-amber-600 tracking-widest" x-text="'Session ' + (bIdx + 1)"></span>
-                                                                <span x-show="!brk.end" class="relative flex h-2 w-2">
-                                                                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                                                                  <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                                                                </span>
-                                                                <span class="text-[10px] font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md" x-show="brk.end" x-text="diffInMins(brk.start, brk.end) + 'm'"></span>
+                                                <div x-show="showBreaks" x-collapse class="border-t border-amber-200/30">
+                                                    <div class="p-5 flex items-center gap-4 overflow-x-auto custom-scrollbar relative">
+                                                        <div class="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-0.5 bg-amber-200/50 z-0"></div>
+                                                        
+                                                        <template x-for="(brk, bIdx) in punchLogs[currentDate]?.[m.id]?.breaks" :key="bIdx">
+                                                            <div class="relative z-10 flex flex-col bg-white border-2 border-amber-200 rounded-[1rem] shadow-sm min-w-[160px] transition-transform hover:-translate-y-1 hover:shadow-lg">
+                                                                <div class="px-4 py-2 border-b border-amber-100 bg-amber-50/50 flex items-center justify-between rounded-t-[14px]">
+                                                                    <span class="text-[9px] font-black uppercase text-amber-600 tracking-widest" x-text="'Session ' + (bIdx + 1)"></span>
+                                                                    <span x-show="!brk.end" class="relative flex h-2 w-2">
+                                                                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                                                      <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                                                                    </span>
+                                                                    <span class="text-[10px] font-black text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md" x-show="brk.end" x-text="diffInMins(brk.start, brk.end) + 'm'"></span>
+                                                                </div>
+                                                                <div class="px-4 py-3 flex items-center justify-between gap-3 text-xs font-bold text-zinc-700">
+                                                                    <span x-text="brk.start"></span>
+                                                                    <svg class="w-3 h-3 text-amber-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                                                                    <span x-text="brk.end || '--:--'" :class="!brk.end ? 'text-amber-500 animate-pulse' : ''"></span>
+                                                                </div>
                                                             </div>
-                                                            <div class="px-4 py-3 flex items-center justify-between gap-3 text-xs font-bold text-zinc-700">
-                                                                <span x-text="brk.start"></span>
-                                                                <svg class="w-3 h-3 text-amber-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
-                                                                <span x-text="brk.end || '--:--'" :class="!brk.end ? 'text-amber-500 animate-pulse' : ''"></span>
-                                                            </div>
-                                                        </div>
-                                                    </template>
+                                                        </template>
+                                                    </div>
                                                 </div>
+
                                             </div>
                                         </div>
+                                        
                                     </div>
                                 </template>
                                 
