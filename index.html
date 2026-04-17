@@ -192,11 +192,35 @@
                     this.processAutoHolidays();
                 }); 
 
-                setInterval(() => {
-                    if (!this.isSyncing && !this.syncQueued && !this.isEditingLog) {
-                        this.syncFromCloud(true); 
-                    }
-                }, 10000);['mousemove', 'keydown', 'mousedown', 'touchstart'].forEach(evt => {
+                // Set up Supabase Realtime WebSocket listener
+const syncChannel = this.supabase.channel('cloud-sync-channel');
+
+syncChannel
+    .on(
+        'postgres_changes',
+        {
+            event: 'UPDATE', // We only care when the vault is updated
+            schema: 'public',
+            table: 'backups',
+            filter: `id=eq.${this.syncKey}` // Only listen to your specific vault record
+        },
+        (payload) => {
+            // When an update happens across the network, check if we are safe to sync
+            if (!this.isSyncing && !this.syncQueued && !this.isEditingLog) {
+                console.log("⚡ Realtime update detected from cloud. Syncing...");
+                this.syncFromCloud(true);
+            }
+        }
+    )
+    .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+            console.log("🟢 Supabase Realtime Connected");
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            // Fallback: If the socket drops, you might want to show offline status
+            console.warn("🔴 Supabase Realtime Disconnected");
+            this.syncError = true; 
+        }
+    });['mousemove', 'keydown', 'mousedown', 'touchstart'].forEach(evt => {
                     window.addEventListener(evt, () => this.resetIdleTimer());
                 });
 
@@ -1926,7 +1950,7 @@
         <div class="hidden md:flex items-center gap-4">
             <div class="flex items-center px-4 py-1.5 bg-black/20 border border-white/5 rounded-full transition-colors" :class="syncError ? 'bg-rose-950/40 border-rose-900/50' : ''">
                 <span class="cloud-indicator" :class="syncError ? 'bg-rose-500' : (isSyncing ? 'status-syncing' : 'status-synced')"></span>
-                <p class="text-[10px] font-black uppercase tracking-widest transition-colors" :class="syncError ? 'text-rose-400' : 'text-white/70'" x-text="syncError ? 'OFF' : (isSyncing ? 'PRG' : 'ON!')"></p>
+                <p class="text-[10px] font-black uppercase tracking-widest transition-colors" :class="syncError ? 'text-rose-400' : 'text-white/70'" x-text="syncError ? 'OFFLINE' : (isSyncing ? 'SYNC' : 'ACTIVE')"></p>
             </div>
             <button x-show="isAdminAuthenticated || isManagerOrLead" @click="showNotifications = !showNotifications" class="relative w-10 h-10 flex items-center justify-center text-white/70 hover:text-white transition-colors">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
