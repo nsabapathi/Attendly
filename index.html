@@ -8,1800 +8,1209 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    
 <script>
-    window.attendanceApp = () => {
-        // FIXED STRICT IST HELPERS - Timezone-agnostic string generation
-        const getISTString = (date = new Date()) => {
-            return new Intl.DateTimeFormat('en-CA', {
-                timeZone: 'Asia/Kolkata',
-                year: 'numeric', month: '2-digit', day: '2-digit'
-            }).format(date);
-        };
+window.attendanceApp = () => {
+    // FIXED STRICT IST HELPERS
+    const getISTString = (date = new Date()) => {
+        return new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit'
+        }).format(date);
+    };
 
-        const getISTDateObject = (date = new Date()) => {
-            const s = getISTString(date);
-            const[y, m, d] = s.split('-').map(Number);
-            return new Date(y, m - 1, d);
-        };
+    const getISTDateObject = (date = new Date()) => {
+        const s = getISTString(date);
+        const[y, m, d] = s.split('-').map(Number);
+        return new Date(y, m - 1, d);
+    };
 
-        const getISTTime24 = () => {
-            const formatter = new Intl.DateTimeFormat('en-GB', { 
-                timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false 
+    const getISTTime24 = () => {
+        const formatter = new Intl.DateTimeFormat('en-GB', { 
+            timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false 
+        });
+        return formatter.format(new Date()); 
+    };
+
+    const generateSecureId = () => Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
+
+    const initialToday = getISTString();
+    const todayObj = getISTDateObject();
+    const firstDayStr = getISTString(new Date(todayObj.getFullYear(), todayObj.getMonth(), 1));
+    const lastDayStr = getISTString(new Date(todayObj.getFullYear(), todayObj.getMonth() + 1, 0));
+
+    return {
+        view: 'portal', 
+        dashboardPeriod: 'month',
+        portalPeriod: 'month', 
+        filterName: '', 
+        filterDept: '', 
+        initialToday: initialToday,
+        currentDate: initialToday,
+        
+        currentISTTimeWidget: '',
+        currentISTDateWidget: '',
+
+        isAdminAuthenticated: false,
+        adminPinInput: '',
+        masterPin: '000000', 
+        newPinValue: '',
+
+        userSession: null,
+        loginIdInput: '',
+        loginPinInput: '',
+        breakPinInput: '',
+        loginStep: 'id', 
+        tempUser: null,
+
+        captchaTimer: null,
+        captchaTimeoutTimer: null,
+        showCaptchaModal: false,
+        captchaTargetNumber: '',
+        captchaInput: '',
+
+        adminFailedAttempts: 0,
+        adminLockoutUntil: 0,
+        userFailedAttempts: {},
+        userLockoutUntil: {},
+        idleTimeout: 5 * 60 * 1000, 
+        idleTimer: null,
+
+        summaryStartDate: firstDayStr,
+        summaryEndDate: lastDayStr,
+
+        autoExportEnabled: false,
+        autoExportTime: '18:00',
+        lastAutoExportDate: '',
+
+        // SUPABASE CREDENTIALS
+        supabaseUrl: 'https://lpthzknjzmxwukwpvhii.supabase.co',
+        supabaseKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxwdGh6a25qem14d3Vrd3B2aGlpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyMzczMDksImV4cCI6MjA5MDgxMzMwOX0.C3uuAVuw3kQWFYcwAFa37bTYbVGOC3DIAgqYpw2osbs',
+        supabase: null,
+        
+        // APP STATE (Hydrated from Relational DB)
+        members: [],
+        attendanceData: {}, 
+        punchLogs: {}, 
+        leaveRequests: [], 
+        roles: [],
+        departments: [],
+        shifts: [],
+        holidayList: [],
+        
+        newRoleName: '',
+        newDeptName: '',
+        newShift: { name: '', inTime: '', outTime: '' },
+        newHoliday: { name: '', date: '', dept: 'All' },
+        isAddingMember: false,
+        isEditing: false,
+        isEditingLog: false,
+        
+        isSyncing: false,
+        syncError: false,
+        syncTimer: null,
+
+        showDeleteModal: false,
+        showLeaveModal: false,
+        showNotifications: false,
+        showLogoutModal: false,
+        logoutTimePreview: '',
+        editingLogId: null,
+        tempPunches: { in: '', out: '' },
+        deleteTarget: null, 
+        memberToDelete: null,
+        notification: null,
+
+        newMember: { empId: '', firstName: '', lastName: '', dept: 'General', role: 'Staff', shift: 'General Shift', allowedPL: 0, allowedSL: 0, allowedPerm: 0, doj: '', doe: '', dob: '', pin: '', captchaEnabled: false },
+        newLeave: { type: 'a', startDate: '', endDate: '', reason: '' },
+
+        statusOptions:[
+            { id: 'p', display: 'P', label: 'Present', color: 'text-emerald-700', bg: 'bg-emerald-50', ring: 'ring-emerald-500', hex: '#10b981' },
+            { id: '1p', display: '1P', label: '1HR Perm.', color: 'text-amber-700', bg: 'bg-amber-50', ring: 'ring-amber-500', hex: '#f59e0b', value: 1 },
+            { id: '2p', display: '2P', label: '2HRS Perm.', color: 'text-orange-700', bg: 'bg-orange-50', ring: 'ring-orange-500', hex: '#ea580c', value: 2 },
+            { id: 'h', display: 'H', label: 'Half Day', color: 'text-sky-700', bg: 'bg-sky-50', ring: 'ring-sky-500', hex: '#0ea5e9', value: 0.5 },
+            { id: 'fh', display: 'FH', label: 'Holiday', color: 'text-violet-700', bg: 'bg-violet-50', ring: 'ring-violet-500', hex: '#8b5cf6' },
+            { id: 'a', display: 'A', label: 'Absent', color: 'text-red-700', bg: 'bg-red-50', ring: 'ring-red-500', hex: '#ef4444', value: 1 },
+            { id: 'lop', display: 'LOP', label: 'Loss of Pay', color: 'text-rose-700', bg: 'bg-rose-50', ring: 'ring-rose-500', hex: '#f43f5e', value: 1 },
+            { id: 'w', display: 'W', label: 'Weekend', color: 'text-slate-600', bg: 'bg-slate-100', ring: 'ring-slate-400', hex: '#64748b' },
+            { id: 'co', display: 'CO', label: 'Comp Off', color: 'text-teal-700', bg: 'bg-teal-50', ring: 'ring-teal-500', hex: '#0f766e', value: 1 }
+        ],
+
+        menuItems:[
+            { id: 'portal', label: 'Personnel', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
+            { id: 'dashboard', label: 'Stats', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>', admin: true },
+            { id: 'record', label: 'Log', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>', admin: true },
+            { id: 'members', label: 'Roster', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>', admin: true },
+            { id: 'summary', label: 'Audit', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>', admin: true },
+            { id: 'master', label: 'Master', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>', admin: true },
+            { id: 'import', label: 'Hub', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>', admin: true }
+        ],
+
+        init() {
+            this.userSession = null;
+            this.supabase = supabase.createClient(this.supabaseUrl, this.supabaseKey);
+
+            setInterval(() => {
+                const now = new Date();
+                this.currentISTTimeWidget = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
+                }).format(now);
+                this.currentISTDateWidget = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'Asia/Kolkata', weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
+                }).format(now);
+            }, 1000);
+            
+            // Initial Fetch from DB
+            this.syncFromCloud(true).then(() => this.processAutoHolidays());
+
+            // FIX 1: Targeted Realtime Listener
+            const syncChannel = this.supabase.channel('global-schema-changes');
+            syncChannel
+                .on('postgres_changes', { event: '*', schema: 'public' }, (payload) => {
+                    this.handleRealtimePayload(payload);
+                })
+                .subscribe((status) => {
+                    if (status === 'SUBSCRIBED') console.log("🟢 Supabase Realtime Connected");
+                    else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') this.syncError = true;
+                });
+
+            ['mousemove', 'keydown', 'mousedown', 'touchstart'].forEach(evt => {
+                window.addEventListener(evt, () => this.resetIdleTimer());
             });
-            return formatter.format(new Date()); 
-        };
 
-        // Initial Today Value
-        const initialToday = getISTString();
-        const todayObj = getISTDateObject();
-        const firstDayStr = getISTString(new Date(todayObj.getFullYear(), todayObj.getMonth(), 1));
-        const lastDayStr = getISTString(new Date(todayObj.getFullYear(), todayObj.getMonth() + 1, 0));
-
-        // FALLBACK ID GENERATOR FOR LEGACY RECORDS
-        const generateSecureId = () => Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
-
-        return {
-            view: 'portal', 
-            dashboardPeriod: 'month',
-            portalPeriod: 'month', 
-            
-            filterName: '', 
-            filterDept: '', 
-            
-            initialToday: initialToday,
-            currentDate: initialToday,
-            
-            // IST Widget Variables
-            currentISTTimeWidget: '',
-            currentISTDateWidget: '',
-
-            isAdminAuthenticated: false,
-            adminPinInput: '',
-            
-            // PURE CLOUD: Default to 000000, will be overwritten by syncFromCloud
-            masterPin: '000000', 
-            newPinValue: '',
-
-            userSession: null,
-            loginIdInput: '',
-            loginPinInput: '',
-            breakPinInput: '',
-            loginStep: 'id', 
-            tempUser: null,
-
-            // SECURITY VARS
-            adminFailedAttempts: 0,
-            adminLockoutUntil: 0,
-            userFailedAttempts: {},
-            userLockoutUntil: {},
-            idleTimeout: 5 * 60 * 1000, 
-            idleTimer: null,
-
-            // IRONCLAD CONFIG SYNC VARS - Defaults to 0 since memory is fresh on load
-            configVersion: 0,
-            dataVersion: 0,
-            forcePushConfig: false,
-            forcePushData: false,
-
-            summaryStartDate: firstDayStr,
-            summaryEndDate: lastDayStr,
-
-            // AUTO EXPORT CONFIGURATION (Moved to Cloud Sync)
-            autoExportEnabled: false,
-            autoExportTime: '18:00',
-            lastAutoExportDate: '',
-
-            // SUPABASE CREDENTIALS
-            supabaseUrl: 'https://lpthzknjzmxwukwpvhii.supabase.co',
-            supabaseKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxwdGh6a25qem14d3Vrd3B2aGlpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyMzczMDksImV4cCI6MjA5MDgxMzMwOX0.C3uuAVuw3kQWFYcwAFa37bTYbVGOC3DIAgqYpw2osbs',
-            supabase: null,
-            syncKey: 'ATTENDLY_MASTER_ORGANIZATION_VAULT', 
-            
-            // PURE CLOUD: Start Empty, populate on init()
-            members:[],
-            attendanceData: {}, 
-            punchLogs: {}, 
-            leaveRequests:[], 
-            roles:['Staff', 'Manager', 'Developer', 'HR', 'Admin', 'Intern'],
-            departments:['General', 'Sales', 'Engineering', 'Marketing'],
-            shifts:[
-                { name: 'General Shift', inTime: '09:00', outTime: '18:00' },
-                { name: 'Night Shift', inTime: '17:30', outTime: '02:30' }
-            ],
-            holidayList:[],
-            
-            newRoleName: '',
-            newDeptName: '',
-            newShift: { name: '', inTime: '', outTime: '' },
-            newHoliday: { name: '', date: '', dept: 'All' },
-            isAddingMember: false,
-            isEditing: false,
-            isEditingLog: false,
-            isSyncing: false,
-            syncError: false,
-            syncQueued: false, 
-            showDeleteModal: false,
-            showLeaveModal: false,
-            showNotifications: false,
-            showLogoutModal: false,
-            logoutTimePreview: '',
-            editingLogId: null,
-            tempPunches: { in: '', out: '' },
-            deleteTarget: null, 
-            memberToDelete: null,
-            notification: null,
-
-            newMember: { empId: '', firstName: '', lastName: '', dept: 'General', role: 'Staff', shift: 'General Shift', allowedPL: 0, allowedSL: 0, allowedPerm: 0, doj: '', doe: '', dob: '', pin: '' },
-            newLeave: { type: 'a', startDate: '', endDate: '', reason: '' },
-
-            statusOptions:[
-                { id: 'p', display: 'P', label: 'Present', color: 'text-emerald-700', bg: 'bg-emerald-50', ring: 'ring-emerald-500', hex: '#10b981' },
-                { id: '1p', display: '1P', label: '1HR Perm.', color: 'text-amber-700', bg: 'bg-amber-50', ring: 'ring-amber-500', hex: '#f59e0b', value: 1 },
-                { id: '2p', display: '2P', label: '2HRS Perm.', color: 'text-orange-700', bg: 'bg-orange-50', ring: 'ring-orange-500', hex: '#ea580c', value: 2 },
-                { id: 'h', display: 'H', label: 'Half Day', color: 'text-sky-700', bg: 'bg-sky-50', ring: 'ring-sky-500', hex: '#0ea5e9', value: 0.5 },
-                { id: 'fh', display: 'FH', label: 'Holiday', color: 'text-violet-700', bg: 'bg-violet-50', ring: 'ring-violet-500', hex: '#8b5cf6' },
-                { id: 'a', display: 'A', label: 'Absent', color: 'text-red-700', bg: 'bg-red-50', ring: 'ring-red-500', hex: '#ef4444', value: 1 },
-                { id: 'lop', display: 'LOP', label: 'Loss of Pay', color: 'text-rose-700', bg: 'bg-rose-50', ring: 'ring-rose-500', hex: '#f43f5e', value: 1 },
-                { id: 'w', display: 'W', label: 'Weekend', color: 'text-slate-600', bg: 'bg-slate-100', ring: 'ring-slate-400', hex: '#64748b' },
-                { id: 'co', display: 'CO', label: 'Comp Off', color: 'text-teal-700', bg: 'bg-teal-50', ring: 'ring-teal-500', hex: '#0f766e', value: 1 }
-            ],
-
-            menuItems:[
-                { id: 'portal', label: 'Personnel', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
-                { id: 'dashboard', label: 'Stats', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>', admin: true },
-                { id: 'record', label: 'Log', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>', admin: true },
-                { id: 'members', label: 'Roster', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>', admin: true },
-                { id: 'summary', label: 'Audit', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>', admin: true },
-                { id: 'master', label: 'Master', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>', admin: true },
-                { id: 'import', label: 'Hub', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>', admin: true }
-            ],
-
-            init() {
-                this.userSession = null;
-                this.supabase = supabase.createClient(this.supabaseUrl, this.supabaseKey);
-
-                // Setup the IST Time Widget
-                setInterval(() => {
-                    const now = new Date();
-                    this.currentISTTimeWidget = new Intl.DateTimeFormat('en-US', {
-                        timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
-                    }).format(now);
-                    this.currentISTDateWidget = new Intl.DateTimeFormat('en-US', {
-                        timeZone: 'Asia/Kolkata', weekday: 'short', year: 'numeric', month: 'short', day: 'numeric'
-                    }).format(now);
-                }, 1000);
-                
-                // Pure Cloud: Await cloud fetch before processing logic
-                this.syncFromCloud(true).then(() => {
-                    
-                    // Clean up members fetched from cloud
-                    this.members = this.members.map(m => {
-                        let mid = m.empId || m.id;
-                        let d = m.dept || m.department || "General";
-                        if (!this.departments.includes(d)) d = this.departments.length > 0 ? this.departments[0] : "General";
-                        let r = m.role || "Staff";
-                        if (!this.roles.includes(r)) r = this.roles.length > 0 ? this.roles[0] : "Staff";
-                        let s = m.shift || "General Shift";
-                        if (!this.shifts.find(x => x.name === s)) s = this.shifts.length > 0 ? this.shifts[0].name : "General Shift";
-                        return { ...m, id: mid, empId: mid, dept: d, role: r, shift: s };
-                    });
-
-                    this.processAutoHolidays();
-                }); 
-
-                // Set up Supabase Realtime WebSocket listener
-const syncChannel = this.supabase.channel('cloud-sync-channel');
-
-syncChannel
-    .on(
-        'postgres_changes',
-        {
-            event: 'UPDATE', // We only care when the vault is updated
-            schema: 'public',
-            table: 'backups',
-            filter: `id=eq.${this.syncKey}` // Only listen to your specific vault record
+            setInterval(() => {
+                if (this.autoExportEnabled && this.autoExportTime) {
+                    const todayStr = getISTString();
+                    const istTimeStr = getISTTime24();
+                    if (this.lastAutoExportDate !== todayStr && istTimeStr >= this.autoExportTime) {
+                        this.executeFullSystemExport(true);
+                        this.lastAutoExportDate = todayStr;
+                        this.upsertConfigCloud('export_settings', { autoExportEnabled: true, autoExportTime: this.autoExportTime, lastAutoExportDate: todayStr });
+                    }
+                }
+            }, 30000);
         },
-        (payload) => {
-            // When an update happens across the network, check if we are safe to sync
-            if (!this.isSyncing && !this.syncQueued && !this.isEditingLog) {
-                console.log("⚡ Realtime update detected from cloud. Syncing...");
-                this.syncFromCloud(true);
+
+        // FIX 1B: Targeted Realtime Handler Method
+        handleRealtimePayload(payload) {
+            if (this.isEditingLog || this.isAddingMember) return;
+
+            const { table, eventType, new: newRec } = payload;
+            let needsReactivity = false;
+
+            if (table === 'attendance' && (eventType === 'INSERT' || eventType === 'UPDATE')) {
+                if (!this.attendanceData[newRec.date]) this.attendanceData[newRec.date] = {};
+                this.attendanceData[newRec.date][newRec.member_id] = newRec.status;
+                needsReactivity = true;
+            } 
+            else if (table === 'punch_logs' && (eventType === 'INSERT' || eventType === 'UPDATE')) {
+                if (!this.punchLogs[newRec.date]) this.punchLogs[newRec.date] = {};
+                
+                // Preserve the breaks and captchas already in local memory, 
+                // just update the IN/OUT times from the cloud payload
+                const existingBreaks = this.punchLogs[newRec.date][newRec.member_id]?.breaks || [];
+                const existingCaptchas = this.punchLogs[newRec.date][newRec.member_id]?.captchas || [];
+
+                this.punchLogs[newRec.date][newRec.member_id] = {
+                    in: newRec.in_time || '', 
+                    out: newRec.out_time || '',
+                    breaks: existingBreaks, 
+                    captchas: existingCaptchas
+                };
+                needsReactivity = true;
             }
-        }
-    )
-    .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-            console.log("🟢 Supabase Realtime Connected");
-        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-            // Fallback: If the socket drops, you might want to show offline status
-            console.warn("🔴 Supabase Realtime Disconnected");
-            this.syncError = true; 
-        }
-    });['mousemove', 'keydown', 'mousedown', 'touchstart'].forEach(evt => {
-                    window.addEventListener(evt, () => this.resetIdleTimer());
+
+            if (needsReactivity) {
+                if (this.syncTimer) clearTimeout(this.syncTimer);
+                this.syncTimer = setTimeout(() => {
+                    this.attendanceData = { ...this.attendanceData };
+                    this.punchLogs = { ...this.punchLogs };
+                }, 500);
+            }
+        },
+
+        // ==========================================
+        //  ☁️ DIRECT CLOUD DATA OPERATIONS (NEW)
+        // ==========================================
+        async upsertConfigCloud(key, value) {
+            try { await this.supabase.from('system_config').upsert({ key, value }); } 
+            catch(e) { console.error("Config save error", e); this.syncError = true; }
+        },
+        
+        async upsertMemberCloud(m) {
+            try {
+                await this.supabase.from('members').upsert({
+                    id: m.id, emp_id: m.empId, first_name: m.firstName, last_name: m.lastName,
+                    dept: m.dept, role: m.role, shift: m.shift, pin: m.pin,
+                    doj: m.doj || null, dob: m.dob || null,
+                    allowed_pl: m.allowedPL, allowed_sl: m.allowedSL, allowed_perm: m.allowedPerm,
+                    captcha_enabled: m.captchaEnabled
                 });
+            } catch(e) { console.error("Member save error", e); }
+        },
 
-                setInterval(() => {
-                    if (this.autoExportEnabled && this.autoExportTime) {
-                        const todayStr = getISTString();
-                        const istTimeStr = getISTTime24();
+        async upsertAttCloud(date, mId, status) {
+            try {
+                if (!status) {
+                    await this.supabase.from('attendance').delete().match({ date, member_id: mId });
+                } else {
+                    await this.supabase.from('attendance').upsert({ date, member_id: mId, status });
+                }
+            } catch(e) { console.error("Attendance save error", e); }
+        },
 
-                        if (this.lastAutoExportDate !== todayStr && istTimeStr >= this.autoExportTime) {
-                            this.executeFullSystemExport(true);
-                            this.lastAutoExportDate = todayStr;
-                            
-                            // Push the updated export date tracking to the cloud
-                            this.markConfigUpdated();
-                            this.saveToLocal(true);
+        // FIX 3: Add Bulk Upsert Method for Holidays
+        async bulkUpsertAttCloud(recordsArray) {
+            if (!recordsArray || recordsArray.length === 0) return;
+            try {
+                await this.supabase.from('attendance').upsert(recordsArray);
+            } catch(e) { console.error("Bulk Attendance save error", e); }
+        },
+
+        async upsertPunchCloud(date, mId) {
+            try {
+                const log = this.punchLogs[date]?.[mId];
+                if (!log) return;
+                await this.supabase.from('punch_logs').upsert({
+                    date, member_id: mId, 
+                    in_time: log.in || null, out_time: log.out || null,
+                    breaks: log.breaks || [], captchas: log.captchas || []
+                });
+            } catch(e) { console.error("Punch save error", e); }
+        },
+
+        async upsertLeaveCloud(req) {
+            try {
+                await this.supabase.from('leave_requests').upsert({
+                    id: req.id, emp_id: req.empId, type: req.type, start_date: req.startDate, 
+                    end_date: req.endDate, reason: req.reason, status: req.status
+                });
+            } catch(e) { console.error("Leave save error", e); }
+        },
+
+        async upsertHolidayCloud(h) {
+            try { await this.supabase.from('holidays').upsert({ id: h.id, name: h.name, date: h.date, dept: h.dept }); } 
+            catch(e) { console.error("Holiday save error", e); }
+        },
+
+        // --- CORE SYNC ---
+        async syncFromCloud(silent = false) {
+            this.isSyncing = true;
+            try {
+                // 1. Fetch Config
+                const { data: cData } = await this.supabase.from('system_config').select('*');
+                if (cData) {
+                    cData.forEach(row => {
+                        if(row.key === 'roles') this.roles = row.value;
+                        if(row.key === 'departments') this.departments = row.value;
+                        if(row.key === 'shifts') this.shifts = row.value;
+                        if(row.key === 'master_pin') this.masterPin = row.value;
+                        if(row.key === 'export_settings') {
+                            this.autoExportEnabled = row.value.autoExportEnabled;
+                            this.autoExportTime = row.value.autoExportTime;
+                            this.lastAutoExportDate = row.value.lastAutoExportDate;
                         }
-                    }
-                }, 30000);
-            },
+                    });
+                }
 
-            get isManagerOrLead() {
-                if (!this.userSession) return false;
-                const r = (this.userSession.role || '').toLowerCase();
-                return r.includes('manager') || r.includes('lead') || r.includes('admin') || r.includes('hr');
-            },
+                // 2. Fetch Members
+                const { data: mData } = await this.supabase.from('members').select('*');
+                if (mData) {
+                    this.members = mData.map(m => ({
+                        id: m.id, empId: m.emp_id, firstName: m.first_name, lastName: m.last_name,
+                        name: `${m.first_name} ${m.last_name || ''}`.trim(),
+                        dept: m.dept, role: m.role, shift: m.shift, pin: m.pin,
+                        doj: m.doj, dob: m.dob, allowedPL: m.allowed_pl, allowedSL: m.allowed_sl, 
+                        allowedPerm: m.allowed_perm, captchaEnabled: m.captcha_enabled
+                    }));
+                }
 
-	        get activeTeamOnBreak() {
-                if (!this.isManagerOrLead) return[];
-                const activeDate = this.getActiveShiftDate();
-                return this.members.filter(m => this.isMemberOnBreak(m.id, activeDate));
-            },
+                // 3. Fetch Leaves & Holidays
+                const { data: lData } = await this.supabase.from('leave_requests').select('*');
+                if (lData) {
+                    this.leaveRequests = lData.map(l => ({
+                        id: l.id, empId: l.emp_id, type: l.type, startDate: l.start_date, 
+                        endDate: l.end_date, reason: l.reason, status: l.status, name: this.members.find(m => m.id === l.emp_id)?.name || ''
+                    }));
+                }
 
-            get pendingLeaveCount() { 
-                return this.leaveRequests.filter(r => r.status === 'pending').length; 
-            },
-            
-            get upcomingHolidays() {
-                const istRef = getISTDateObject();
-                istRef.setDate(istRef.getDate() + 1); // tomorrow
-                const tomorrowStr = getISTString(istRef);
+                const { data: hData } = await this.supabase.from('holidays').select('*');
+                if (hData) this.holidayList = hData;
+
+                // FIX 2: Scope data fetching to the last 60 days to prevent 100,000 record crash
+                const todayRef = getISTDateObject();
+                const scopeStartStr = getISTString(new Date(todayRef.getFullYear(), todayRef.getMonth() - 2, 1));
+
+                // 4. Fetch Attendance
+                const { data: aData } = await this.supabase.from('attendance')
+                    .select('*')
+                    .gte('date', scopeStartStr);
                 
-                return this.holidayList.filter(h => {
-                    if (h.date !== tomorrowStr) return false;
-                    const hDeptStr = (h.dept || "All").trim().toLowerCase();
-                    if (hDeptStr === 'all') return true;
-                    if (this.userSession) {
-                        const mDeptStr = (this.userSession.dept || "General").trim().toLowerCase();
-                        return hDeptStr === mDeptStr;
-                    }
-                    return false; 
-                });
-            },
+                let newAtt = {};
+                if (aData) {
+                    aData.forEach(r => {
+                        if(!newAtt[r.date]) newAtt[r.date] = {};
+                        newAtt[r.date][r.member_id] = r.status;
+                    });
+                }
+                this.attendanceData = newAtt;
 
-            get exceptionLogs() {
-                if (!this.userSession) return[];
-                const id = this.userSession.id;
-                const logs =[];
-                const targetStatuses =['a', 'h', '1p', '2p', 'lop', 'co'];
+                // 5. Fetch Punches, Breaks, and Captchas
+                const { data: pData } = await this.supabase.from('punch_logs').select('*').gte('date', scopeStartStr);
+                const { data: bData } = await this.supabase.from('break_logs').select('*').gte('log_date', scopeStartStr);
+const { data: capData } = await this.supabase.from('captcha_logs').select('*').gte('log_date', scopeStartStr);                
+                let newPunch = {};
                 
-                Object.keys(this.attendanceData)
-                    .sort((a, b) => new Date(b) - new Date(a)) 
-                    .forEach(dateKey => {
-                        const statusId = this.attendanceData[dateKey][id];
-                        if (statusId && targetStatuses.includes(statusId)) {
-                            const statusObj = this.statusOptions.find(s => s.id === statusId);
-                            logs.push({
-                                date: dateKey,
-                                label: this.formatDate(dateKey),
-                                status: statusObj
+                // First, build the base punch objects
+                if (pData) {
+                    pData.forEach(r => {
+                        if(!newPunch[r.date]) newPunch[r.date] = {};
+                        newPunch[r.date][r.member_id] = {
+                            in: r.in_time || '', out: r.out_time || '',
+                            breaks: [], captchas: [] 
+                        };
+                    });
+                }
+
+                // Next, merge the breaks into the correct day/user object
+                if (bData) {
+                    bData.forEach(b => {
+                        if (newPunch[b.log_date] && newPunch[b.log_date][b.member_id]) {
+                            newPunch[b.log_date][b.member_id].breaks.push({
+                                start: b.start_time, end: b.end_time || ''
                             });
                         }
                     });
-                return logs;
-            },
+                }
 
-            get todayEvents() {
-                const istRef = getISTDateObject();
-                const curM = istRef.getMonth() + 1;
-                const curD = istRef.getDate();
-                const events =[];
+                // Finally, merge the captchas into the correct day/user object
+                if (capData) {
+    capData.forEach(c => {
+                        if (newPunch[c.log_date] && newPunch[c.log_date][c.member_id]) {
+                            newPunch[c.log_date][c.member_id].captchas.push({
+                                time: c.check_time, status: c.status
+                            });
+                        }
+                    });
+                }
 
-                this.members.forEach(m => {
-                    if (m.dob) {
-                        const parts = m.dob.split('-');
-                        if (parts.length === 3 && parseInt(parts[1]) === curM && parseInt(parts[2]) === curD) {
-                            events.push({ id: 'bday_'+m.id, type: 'birthday', member: m, title: 'Birthday', icon: '🎂', color: 'text-pink-600', bg: 'bg-pink-100' });
-                        }
-                    }
-                    if (m.doj) {
-                        const parts = m.doj.split('-');
-                        if (parts.length === 3 && parseInt(parts[1]) === curM && parseInt(parts[2]) === curD) {
-                            const years = istRef.getFullYear() - parseInt(parts[0]);
-                            if (years > 0) {
-                                events.push({ id: 'annv_'+m.id, type: 'anniversary', member: m, title: `Work Anniversary (${years} Yr)`, icon: '🎊', color: 'text-emerald-600', bg: 'bg-emerald-100' });
-                            } else if (years === 0) {
-                                events.push({ id: 'annv_'+m.id, type: 'anniversary', member: m, title: `Joined Today!`, icon: '🎉', color: 'text-indigo-600', bg: 'bg-indigo-100' });
-                            }
-                        }
-                    }
-                });
-                return events;
-            },
+                this.punchLogs = newPunch;
+
+                // Session validation check
+                if (this.userSession && !this.members.find(m => m.id === this.userSession.id)) {
+                    this.logoutUser();
+                }
+                
+                this.syncError = false;
+                if (!silent) this.showNote("Database Synced", "success");
+            } catch (e) {
+                console.error("Cloud Pull Error:", e);
+                this.syncError = true;
+            } finally {
+                this.isSyncing = false;
+            }
+        },
+
+        // Legacy compatibility - redirects to manual sync
+        async syncToCloud() {
+            this.showNote("Syncing is now Realtime. No manual push required.", "success");
+        },
+
+        // ==========================================
+        //  🔄 CAPTCHA & APP LOGIC UPDATED
+        // ==========================================
+
+        toggleCaptcha() {
+            if (!this.userSession) return;
+            const idx = this.members.findIndex(m => m.id === this.userSession.id);
+            if (idx > -1) {
+                let current = this.members[idx].captchaEnabled;
+                this.members[idx].captchaEnabled = !current;
+                this.userSession.captchaEnabled = !current;
+                
+                this.upsertMemberCloud(this.members[idx]); // Targeted Save
+
+                if (this.userSession.captchaEnabled) {
+                    if ("Notification" in window && Notification.permission !== "granted") Notification.requestPermission();
+                    this.scheduleNextCaptcha();
+                    this.showNote("Verification Mode Enabled", "success");
+                } else {
+                    this.clearCaptchaTimers();
+                    this.showNote("Verification Mode Disabled", "success");
+                }
+            }
+        },
+
+        clearCaptchaTimers() {
+            if (this.captchaTimer) clearTimeout(this.captchaTimer);
+            if (this.captchaTimeoutTimer) clearTimeout(this.captchaTimeoutTimer);
+        },
+
+        scheduleNextCaptcha() {
+            this.clearCaptchaTimers();
+            if (!this.userSession || !this.userSession.captchaEnabled || this.userOnBreak) return;
+            const activeDate = this.getActiveShiftDate();
+            const log = this.punchLogs[activeDate]?.[this.userSession.id];
+            if (!log || !log.in || log.out) return;
+            const interval = Math.floor(Math.random() * (35 * 60000 - 20 * 60000 + 1)) + 20 * 60000;
+            this.captchaTimer = setTimeout(() => this.triggerCaptcha(), interval);
+        },
+
+        triggerCaptcha() {
+            this.captchaTargetNumber = Math.floor(100000 + Math.random() * 900000).toString();
+            this.captchaInput = '';
+            this.showCaptchaModal = true;
+            if ("Notification" in window && Notification.permission === "granted") {
+                new Notification("RevCentric Solutions", { body: "Verification Required", icon: "logo.png" });
+            }
+            this.captchaTimeoutTimer = setTimeout(() => this.handleCaptchaTimeout(), 120000);
+        },
+
+        submitCaptcha() {
+            if (!this.showCaptchaModal) return;
+            this.clearCaptchaTimers();
+            this.showCaptchaModal = false;
+            const passed = this.captchaInput === this.captchaTargetNumber;
+            this.recordCaptchaResult(passed ? 'Passed' : 'Failed');
+            if (passed) this.showNote("Verified Successfully", "success");
+            else this.showNote("Verification Failed. Result logged.", "error");
+            this.scheduleNextCaptcha();
+        },
+
+        handleCaptchaTimeout() {
+            if (!this.showCaptchaModal) return;
+            this.showCaptchaModal = false;
+            this.clearCaptchaTimers();
+            this.recordCaptchaResult('Missed');
+            this.showNote("Verification Missed", "error");
+            this.scheduleNextCaptcha();
+        },
+
+        async recordCaptchaResult(status) {
+            if (!this.userSession) return;
+            const activeDate = this.getActiveShiftDate();
+            const uId = this.userSession.id;
+            const checkTime = this.getCurrentTimeIST();
             
-            get userOnBreak() {
-                if (!this.userSession) return false;
-                const activeDate = this.getActiveShiftDate();
-                const breaks = this.punchLogs[activeDate]?.[this.userSession.id]?.breaks;
-                if (!breaks || breaks.length === 0) return false;
-                const lastBreak = breaks[breaks.length - 1];
-                return !lastBreak.end; 
-            },
+            if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
+            if (!this.punchLogs[activeDate][uId]) this.punchLogs[activeDate][uId] = { in: '', out: '', breaks: [], captchas: [] };
+            if (!this.punchLogs[activeDate][uId].captchas) this.punchLogs[activeDate][uId].captchas = [];
+            
+            this.punchLogs[activeDate][uId].captchas.push({ time: checkTime, status: status });
+            this.punchLogs = { ...this.punchLogs };
+            
+            try {
+                await this.supabase.from('captcha_logs').insert({
+                    member_id: uId, log_date: activeDate, check_time: checkTime, status: status
+                });
+            } catch(e) { console.error("Captcha log error", e); }
+        },
 
-            isMemberOnBreak(memberId, dateKey) {
-                const breaks = this.punchLogs[dateKey]?.[memberId]?.breaks;
-                if (!breaks || breaks.length === 0) return false;
-                const lastBreak = breaks[breaks.length - 1];
-                return !lastBreak.end; 
-            },
-
-            markConfigUpdated() {
-                this.configVersion = Date.now();
-                this.forcePushConfig = true; 
-            },
-
-            markDataUpdated() {
-                this.dataVersion = Date.now();
-                this.forcePushData = true;
-            },
-
-            submitLeave() {
-                if (!this.newLeave.startDate || !this.newLeave.endDate) return this.showNote("Dates missing", "error");
-                const request = {
-                    id: generateSecureId(),
-                    empId: this.userSession.empId,
-                    name: this.userSession.firstName + ' ' + (this.userSession.lastName || ''),
-                    type: this.newLeave.type,
-                    startDate: this.newLeave.startDate,
-                    endDate: this.newLeave.endDate,
-                    reason: this.newLeave.reason,
-                    status: 'pending',
-                    createdAt: new Date().toISOString()
-                };
-                this.leaveRequests =[request, ...this.leaveRequests];
-                this.saveToLocal(true);
-                this.showLeaveModal = false;
-                this.newLeave = { type: 'a', startDate: '', endDate: '', reason: '' };
-                this.showNote("Leave Request Forwarded", "success");
-            },
-
-            approveLeave(reqId) {
-                const req = this.leaveRequests.find(r => r.id === reqId);
-                if (!req) return;
-                req.status = 'approved';
-                
-                let start = new Date(req.startDate);
-                let end = new Date(req.endDate);
-                let hasUpdates = false;
-                for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-                    const dateStr = getISTString(d);
-                    if (!this.attendanceData[dateStr]) this.attendanceData[dateStr] = {};
-                    this.attendanceData[dateStr][req.empId] = req.type;
-                    hasUpdates = true;
+        get isManagerOrLead() {
+            if (!this.userSession) return false;
+            const r = (this.userSession.role || '').toLowerCase();
+            return r.includes('manager') || r.includes('lead') || r.includes('admin') || r.includes('hr');
+        },
+        get activeTeamOnBreak() {
+            if (!this.isManagerOrLead) return [];
+            const activeDate = this.getActiveShiftDate();
+            return this.members.filter(m => this.isMemberOnBreak(m.id, activeDate));
+        },
+        get pendingLeaveCount() { return this.leaveRequests.filter(r => r.status === 'pending').length; },
+        get upcomingHolidays() {
+            const istRef = getISTDateObject();
+            istRef.setDate(istRef.getDate() + 1); 
+            const tomorrowStr = getISTString(istRef);
+            return this.holidayList.filter(h => h.date === tomorrowStr && (h.dept === 'All' || h.dept === this.userSession?.dept));
+        },
+        get exceptionLogs() {
+            if (!this.userSession) return [];
+            const id = this.userSession.id;
+            const logs = [];
+            Object.keys(this.attendanceData).sort((a,b)=>new Date(b)-new Date(a)).forEach(dk => {
+                const sId = this.attendanceData[dk][id];
+                if (['a','h','1p','2p','lop','co'].includes(sId)) {
+                    logs.push({ date: dk, label: this.formatDate(dk), status: this.statusOptions.find(s=>s.id===sId) });
                 }
-                
-                this.leaveRequests =[...this.leaveRequests];
-                if(hasUpdates) {
-                    this.attendanceData = { ...this.attendanceData };
-                    this.markDataUpdated(); 
+            });
+            return logs;
+        },
+        get todayEvents() {
+            const curM = getISTDateObject().getMonth() + 1, curD = getISTDateObject().getDate();
+            const events = [];
+            this.members.forEach(m => {
+                if (m.dob && parseInt(m.dob.split('-')[1]) === curM && parseInt(m.dob.split('-')[2]) === curD) events.push({ id: 'bday_'+m.id, type: 'birthday', member: m, title: 'Birthday', icon: '🎂', color: 'text-pink-600', bg: 'bg-pink-100' });
+                if (m.doj && parseInt(m.doj.split('-')[1]) === curM && parseInt(m.doj.split('-')[2]) === curD) {
+                    const yrs = getISTDateObject().getFullYear() - parseInt(m.doj.split('-')[0]);
+                    events.push({ id: 'annv_'+m.id, type: 'anniversary', member: m, title: yrs > 0 ? `Anniversary (${yrs} Yr)` : 'Joined Today!', icon: yrs > 0 ? '🎊' : '🎉', color: yrs > 0 ? 'text-emerald-600' : 'text-indigo-600', bg: yrs > 0 ? 'bg-emerald-100' : 'bg-indigo-100' });
                 }
-                this.saveToLocal(true);
-                this.showNote(`Approved leave for ${req.name}`);
-            },
+            });
+            return events;
+        },
+        get userOnBreak() {
+            if (!this.userSession) return false;
+            const breaks = this.punchLogs[this.getActiveShiftDate()]?.[this.userSession.id]?.breaks;
+            return breaks && breaks.length > 0 && !breaks[breaks.length - 1].end;
+        },
+        isMemberOnBreak(mId, dateKey) {
+            const breaks = this.punchLogs[dateKey]?.[mId]?.breaks;
+            return breaks && breaks.length > 0 && !breaks[breaks.length - 1].end;
+        },
 
-            rejectLeave(reqId) {
-                const req = this.leaveRequests.find(r => r.id === reqId);
-                if (req) req.status = 'rejected';
-                this.leaveRequests = [...this.leaveRequests];
-                this.saveToLocal(true);
+        submitLeave() {
+            if (!this.newLeave.startDate || !this.newLeave.endDate) return this.showNote("Dates missing", "error");
+            const req = {
+                id: generateSecureId(), empId: this.userSession.empId, name: this.userSession.name,
+                type: this.newLeave.type, startDate: this.newLeave.startDate, endDate: this.newLeave.endDate,
+                reason: this.newLeave.reason, status: 'pending'
+            };
+            this.leaveRequests.unshift(req);
+            this.upsertLeaveCloud(req); // Targeted Save
+            this.showLeaveModal = false;
+            this.newLeave = { type: 'a', startDate: '', endDate: '', reason: '' };
+            this.showNote("Leave Request Forwarded", "success");
+        },
+
+        approveLeave(reqId) {
+            const req = this.leaveRequests.find(r => r.id === reqId);
+            if (!req) return;
+            req.status = 'approved';
+            this.upsertLeaveCloud(req); // Targeted Save
+
+            for (let d = new Date(req.startDate); d <= new Date(req.endDate); d.setDate(d.getDate() + 1)) {
+                const dStr = getISTString(d);
+                if (!this.attendanceData[dStr]) this.attendanceData[dStr] = {};
+                this.attendanceData[dStr][req.empId] = req.type;
+                this.upsertAttCloud(dStr, req.empId, req.type); // Targeted Save
+            }
+            this.attendanceData = {...this.attendanceData};
+            this.showNote(`Approved leave for ${req.name}`);
+        },
+
+        rejectLeave(reqId) {
+            const req = this.leaveRequests.find(r => r.id === reqId);
+            if (req) {
+                req.status = 'rejected';
+                this.upsertLeaveCloud(req); // Targeted Save
                 this.showNote(`Rejected leave for ${req.name}`, "error");
-            },
+            }
+        },
 
-            processAutoHolidays() {
-                let hasUpdates = false;
-                const currentData = { ...this.attendanceData }; 
-
-                this.holidayList.forEach(holiday => {
-                    const hDeptStr = (holiday.dept || "All").trim().toLowerCase();
-                    this.members.forEach(member => {
-                        const mDeptStr = (member.dept || "General").trim().toLowerCase();
-                        if (hDeptStr === 'all' || hDeptStr === mDeptStr) {
-                            if (!currentData[holiday.date]) currentData[holiday.date] = {};
-                            if (!currentData[holiday.date][member.id]) {
-                                currentData[holiday.date][member.id] = 'fh';
-                                hasUpdates = true;
-                            }
-                        }
-                    });
-                });
-
-                if (hasUpdates) {
-                    this.attendanceData = currentData;
-                    this.markDataUpdated();
-                    this.saveToLocal(true);
-                }
-            },
-
-            addHoliday() {
-                if (!this.newHoliday.name || !this.newHoliday.date) return this.showNote("Invalid Details", "error");
-                this.holidayList.push({ ...this.newHoliday, id: generateSecureId() });
-                this.holidayList.sort((a,b) => new Date(a.date) - new Date(b.date));
-                this.newHoliday = { name: '', date: '', dept: 'All' };
-                this.processAutoHolidays();
-                this.markConfigUpdated();
-                this.saveToLocal(true);
-                this.showNote("Holiday Processed Successfully");
-            },
-
-            removeHoliday(id) {
-                this.holidayList = this.holidayList.filter(h => h.id !== id);
-                this.markConfigUpdated();
-                this.saveToLocal(true);
-            },
-
-            getCurrentTimeIST() {
-                return new Intl.DateTimeFormat('en-US', {
-                    timeZone: 'Asia/Kolkata',
-                    hour: '2-digit', minute: '2-digit', hour12: true
-                }).format(new Date());
-            },
-
-            formatTimeDisplay(time24) {
-                if (!time24) return '--:--';
-                const[h, m] = time24.split(':');
-                const hNum = parseInt(h, 10);
-                const ampm = hNum >= 12 ? 'PM' : 'AM';
-                const h12 = hNum % 12 || 12;
-                return `${h12.toString().padStart(2, '0')}:${m} ${ampm}`;
-            },
+        // FIX 3B: Use Bulk Upsert instead of N+1 API calls
+        processAutoHolidays() {
+            const bulkRecords = [];
             
-            formatHoursDecimal(mins) {
-                if (!mins || mins <= 0) return '0.00 Hrs';
-                return (mins / 60).toFixed(2) + ' Hrs';
-            },
-
-            getActiveShiftDate() {
-                if (!this.userSession) return getISTString();
-                const todayStr = getISTString();
-                
-                const shiftName = this.userSession.shift || '';
-                const shiftObj = this.shifts.find(s => s.name === shiftName) || {};
-                
-                const currentHourIST = parseInt(getISTTime24().split(':')[0], 10);
-                let isNightShift = shiftObj.inTime && shiftObj.outTime ? (shiftObj.inTime > shiftObj.outTime) : shiftName.toLowerCase().includes('night');
-                
-                if (isNightShift) {
-                    if (currentHourIST < 14) {
-                        const yesterdayObj = getISTDateObject();
-                        yesterdayObj.setDate(yesterdayObj.getDate() - 1);
-                        return getISTString(yesterdayObj);
-                    }
-                    return todayStr;
-                } else {
-                    if (currentHourIST < 5) {
-                        const yesterdayObj = getISTDateObject();
-                        yesterdayObj.setDate(yesterdayObj.getDate() - 1);
-                        const yesterdayStr = getISTString(yesterdayObj);
-                        
-                        const uId = this.userSession.id;
-                        const yesterdayLog = this.punchLogs[yesterdayStr]?.[uId];
-                        
-                        if (yesterdayLog && yesterdayLog.in && (!yesterdayLog.out)) {
-                            return yesterdayStr;
+            this.holidayList.forEach(h => {
+                this.members.forEach(m => {
+                    if (h.dept === 'All' || h.dept === m.dept) {
+                        if (this.attendanceData[h.date]?.[m.id] !== 'fh') {
+                            if(!this.attendanceData[h.date]) this.attendanceData[h.date] = {};
+                            this.attendanceData[h.date][m.id] = 'fh';
+                            
+                            // Queue it up instead of firing an API call immediately
+                            bulkRecords.push({
+                                date: h.date,
+                                member_id: m.id,
+                                status: 'fh'
+                            });
                         }
-                    }
-                    return todayStr;
-                }
-            },
-
-            mergeDailyData(base = {}, overlay = {}) {
-                const merged = JSON.parse(JSON.stringify(base || {}));
-                const safeOverlay = JSON.parse(JSON.stringify(overlay || {}));
-                for (let date in safeOverlay) {
-                    if (!merged[date]) merged[date] = {};
-                    for (let id in safeOverlay[date]) {
-                        if (safeOverlay[date][id]) {
-                            merged[date][id] = safeOverlay[date][id];
-                        }
-                    }
-                }
-                return merged;
-            },
-
-            mergePunchData(base = {}, overlay = {}) {
-                const merged = JSON.parse(JSON.stringify(base || {}));
-                const safeOverlay = JSON.parse(JSON.stringify(overlay || {}));
-                for (let date in safeOverlay) {
-                    if (!merged[date]) merged[date] = {};
-                    for (let id in safeOverlay[date]) {
-                        let bLog = merged[date][id] || {};
-                        let oLog = safeOverlay[date][id] || {};
-                        
-                        let bBreaks = Array.isArray(bLog.breaks) ? bLog.breaks :[];
-                        let oBreaks = Array.isArray(oLog.breaks) ? oLog.breaks :[];
-                        
-                        let mergedBreaks = oBreaks;
-                        if (bBreaks.length > oBreaks.length) {
-                            mergedBreaks = bBreaks;
-                        } else if (bBreaks.length === oBreaks.length) {
-                            mergedBreaks = JSON.stringify(bBreaks).length > JSON.stringify(oBreaks).length ? bBreaks : oBreaks;
-                        }
-
-                        merged[date][id] = {
-                            in: oLog.in || bLog.in || '',
-                            out: oLog.out || bLog.out || '',
-                            breaks: mergedBreaks
-                        };
-                    }
-                }
-                return merged;
-            },
-
-            mergeLeaves(base = [], overlay =[]) {
-                const map = new Map();
-                (base ||[]).forEach(l => map.set(l.id, l));
-                (overlay ||[]).forEach(o => {
-                    let b = map.get(o.id);
-                    if (!b || (b.status === 'pending' && o.status !== 'pending') || o.status === 'pending') {
-                        map.set(o.id, o);
                     }
                 });
-                return Array.from(map.values());
-            },
+            });
+            
+            this.attendanceData = {...this.attendanceData};
+            
+            // Fire exactly ONE api call containing all records
+            if (bulkRecords.length > 0) {
+                this.bulkUpsertAttCloud(bulkRecords);
+            }
+        },
 
-            encryptionKey: 'ATTENDLY_SECURE_AES_256_VAULT_KEY_V1',
+        addHoliday() {
+            if (!this.newHoliday.name || !this.newHoliday.date) return this.showNote("Invalid Details", "error");
+            const h = { ...this.newHoliday, id: generateSecureId() };
+            this.holidayList.push(h);
+            this.upsertHolidayCloud(h); // Targeted Save
+            this.newHoliday = { name: '', date: '', dept: 'All' };
+            this.processAutoHolidays();
+            this.showNote("Holiday Processed Successfully");
+        },
 
-            resetIdleTimer() {
-                if (this.idleTimer) clearTimeout(this.idleTimer);
-                if (this.isAdminAuthenticated) {
-                    this.idleTimer = setTimeout(() => {
-                        if(this.isAdminAuthenticated) {
-                            this.logoutAdmin();
-                            this.showNote("Admin Vault auto-locked due to inactivity", "error");
-                        }
-                    }, this.idleTimeout);
-                }
-            },
+        async removeHoliday(id) {
+            this.holidayList = this.holidayList.filter(h => h.id !== id);
+            try { await this.supabase.from('holidays').delete().eq('id', id); } catch(e){}
+        },
 
-            async syncToCloud() {
-                if (this.isSyncing) {
-                    this.syncQueued = true;
-                    return;
-                }
-                this.isSyncing = true;
-                this.syncQueued = false;
+        getCurrentTimeIST() {
+            return new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date());
+        },
+        formatTimeDisplay(time24) {
+            if (!time24) return '--:--';
+            const[h, m] = time24.split(':');
+            let hNum = parseInt(h, 10);
+            const ampm = hNum >= 12 ? 'PM' : 'AM';
+            return `${(hNum % 12 || 12).toString().padStart(2, '0')}:${m} ${ampm}`;
+        },
+        formatHoursDecimal(mins) { return (!mins || mins <= 0) ? '0.00 Hrs' : (mins / 60).toFixed(2) + ' Hrs'; },
 
-                try {
-                    const { data: cloudData } = await this.supabase.from('backups').select('content').eq('id', this.syncKey).single();
-                    
-                    let cloud = {};
-                    if (cloudData?.content?.encryptedPayload) {
-                        const bytes = CryptoJS.AES.decrypt(cloudData.content.encryptedPayload, this.encryptionKey);
-                        cloud = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
-                    } else {
-                        cloud = cloudData?.content || {}; 
-                    }
+        getActiveShiftDate() {
+            if (!this.userSession) return getISTString();
+            const shiftName = this.userSession.shift || '';
+            const shiftObj = this.shifts.find(s => s.name === shiftName) || {};
+            const currentHourIST = parseInt(getISTTime24().split(':')[0], 10);
+            let isNightShift = shiftObj.inTime && shiftObj.outTime ? (shiftObj.inTime > shiftObj.outTime) : shiftName.toLowerCase().includes('night');
+            
+            if (isNightShift && currentHourIST < 14) {
+                const y = getISTDateObject(); y.setDate(y.getDate() - 1); return getISTString(y);
+            } else if (!isNightShift && currentHourIST < 5) {
+                const y = getISTDateObject(); y.setDate(y.getDate() - 1); 
+                if (this.punchLogs[getISTString(y)]?.[this.userSession.id]?.in && !this.punchLogs[getISTString(y)]?.[this.userSession.id]?.out) return getISTString(y);
+            }
+            return getISTString();
+        },
 
-                    const cloudTime = parseInt(cloud.configVersion) || 0;
-                    const cloudDataTime = parseInt(cloud.dataVersion) || 0;
-                    let useLocalConfig = false;
+        resetIdleTimer() {
+            if (this.idleTimer) clearTimeout(this.idleTimer);
+            if (this.isAdminAuthenticated) {
+                this.idleTimer = setTimeout(() => { if(this.isAdminAuthenticated) { this.logoutAdmin(); this.showNote("Vault auto-locked", "error"); } }, this.idleTimeout);
+            }
+        },
 
-                    if (this.forcePushConfig) {
-                        useLocalConfig = true;
-                        this.configVersion = Math.max(this.configVersion, cloudTime) + 1;
-                    } else {
-                        useLocalConfig = this.configVersion >= cloudTime;
-                    }
+        async startBreak() {
+            if (!this.userSession) return;
+            this.clearCaptchaTimers();
+            const activeDate = this.getActiveShiftDate();
+            const uId = this.userSession.id;
+            const startTime = this.getCurrentTimeIST();
 
-                    if (this.forcePushData) {
-                        this.dataVersion = Math.max(this.dataVersion || 0, cloudDataTime) + 1;
-                    }
+            if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
+            if (!this.punchLogs[activeDate][uId]) this.punchLogs[activeDate][uId] = { in: '', out: '', breaks:[], captchas: [] };
+            if (!this.punchLogs[activeDate][uId].breaks) this.punchLogs[activeDate][uId].breaks = [];
+            
+            this.punchLogs[activeDate][uId].breaks.push({ start: startTime, end: '' });
+            this.punchLogs = { ...this.punchLogs };
+            
+            try {
+                await this.supabase.from('break_logs').insert({
+                    member_id: uId, log_date: activeDate, start_time: startTime
+                });
+            } catch(e) { console.error("Break start error", e); }
+            
+            this.breakPinInput = '';
+            this.showNote("Break Started & Tool Locked", "success");
+            try { const elem = document.documentElement; if (elem.requestFullscreen) elem.requestFullscreen().catch(e=>e); } catch(e) {}
+            setTimeout(() => { const el = document.getElementById('break-pin-input'); if(el) el.focus(); }, 100);
+        },
 
-                    const safeLocal = JSON.parse(JSON.stringify({
-                        members: this.members, roles: this.roles, departments: this.departments,
-                        shifts: this.shifts, holidayList: this.holidayList, masterPin: this.masterPin
-                    }));
-
-                    const finalPayload = {
-                        configVersion: useLocalConfig ? this.configVersion : cloudTime,
-                        dataVersion: this.forcePushData ? this.dataVersion : cloudDataTime,
-                        members: useLocalConfig ? safeLocal.members : (cloud.members || safeLocal.members),
-                        roles: useLocalConfig ? safeLocal.roles : (cloud.roles || safeLocal.roles),
-                        departments: useLocalConfig ? safeLocal.departments : (cloud.departments || safeLocal.departments),
-                        shifts: useLocalConfig ? safeLocal.shifts : (cloud.shifts || safeLocal.shifts),
-                        holidayList: useLocalConfig ? safeLocal.holidayList : (cloud.holidayList || safeLocal.holidayList),
-                        masterPin: useLocalConfig ? safeLocal.masterPin : (cloud.masterPin || safeLocal.masterPin),
-                        
-                        // CLOUD TRACKING FOR EXPORT PREFERENCES
-                        autoExportEnabled: useLocalConfig ? this.autoExportEnabled : (cloud.autoExportEnabled || false),
-                        autoExportTime: useLocalConfig ? this.autoExportTime : (cloud.autoExportTime || '18:00'),
-                        lastAutoExportDate: useLocalConfig ? this.lastAutoExportDate : (cloud.lastAutoExportDate || ''),
-
-                        attendanceData: this.forcePushData ? this.attendanceData : this.mergeDailyData(cloud.attendanceData, this.attendanceData),
-                        punchLogs: this.forcePushData ? this.punchLogs : this.mergePunchData(cloud.punchLogs, this.punchLogs),
-                        leaveRequests: this.forcePushData ? this.leaveRequests : this.mergeLeaves(cloud.leaveRequests, this.leaveRequests)
-                    };
-
-                    if (!useLocalConfig) {
-                        this.members = finalPayload.members;
-                        this.roles = finalPayload.roles;
-                        this.departments = finalPayload.departments;
-                        this.shifts = finalPayload.shifts;
-                        this.holidayList = finalPayload.holidayList;
-                        this.masterPin = finalPayload.masterPin;
-                        
-                        this.autoExportEnabled = finalPayload.autoExportEnabled;
-                        this.autoExportTime = finalPayload.autoExportTime;
-                        this.lastAutoExportDate = finalPayload.lastAutoExportDate;
-                        
-                        this.configVersion = finalPayload.configVersion;
-                    }
-                    
-                    this.attendanceData = finalPayload.attendanceData;
-                    this.punchLogs = finalPayload.punchLogs;
-                    this.leaveRequests = finalPayload.leaveRequests;
-
-                    const encryptedString = CryptoJS.AES.encrypt(JSON.stringify(finalPayload), this.encryptionKey).toString();
-
-                    await this.supabase.from('backups').upsert({ 
-                        id: this.syncKey, 
-                        content: { encryptedPayload: encryptedString }, 
-                        updated_at: new Date().toISOString() 
-                    });
-                    
-                    if (useLocalConfig) { this.forcePushConfig = false; }
-                    if (this.forcePushData) { this.forcePushData = false; }
-
-                    this.syncError = false; 
-                } catch (e) { 
-                    console.error("Cloud Push Error:", e); 
-                    this.syncError = true; 
-                } finally { 
-                    this.isSyncing = false; 
-                    if (this.syncQueued) {
-                        this.syncToCloud();
-                    }
-                }
-            },
-
-            async syncFromCloud(silent = false) {
-                if (this.isSyncing) return;
-                this.isSyncing = true;
-                try {
-                    const { data, error } = await this.supabase.from('backups').select('content').eq('id', this.syncKey).single();
-                    if (error && error.code !== 'PGRST116') throw error; 
-                    
-                    if (data?.content) {
-                        let cloud = {};
-                        
-                        if (data.content.encryptedPayload) {
-                            try {
-                                const bytes = CryptoJS.AES.decrypt(data.content.encryptedPayload, this.encryptionKey);
-                                cloud = JSON.parse(bytes.toString(CryptoJS.enc.Utf8));
-                            } catch (decryptionError) {
-                                console.error("Decryption Failed - Invalid Key or Corrupt Data", decryptionError);
-                                this.showNote("Vault Decryption Failed!", "error");
-                                throw decryptionError;
-                            }
-                        } else {
-                            cloud = data.content;
-                        }
-
-                        const cloudTime = parseInt(cloud.configVersion) || 0;
-                        const cloudDataTime = parseInt(cloud.dataVersion) || 0;
-
-                        const localHasData = Object.keys(this.attendanceData).length > 0;
-                        const cloudIsEmpty = !cloud.attendanceData || Object.keys(cloud.attendanceData).length === 0;
-                        
-                        // Prevention Mechanism: Only triggers if the local memory has been populated and cloud is wiped
-                        if (localHasData && cloudIsEmpty) {
-                            console.warn("Safety Triggered: Cloud is empty but local has data. Forcing push instead of wipe.");
-                            this.markDataUpdated();
-                            setTimeout(() => this.syncToCloud(), 500);
-                            return;
-                        }
-                        
-                        if (this.forcePushConfig || this.forcePushData || (this.configVersion > cloudTime && this.configVersion !== 0)) {
-                            setTimeout(() => this.syncToCloud(), 500);
-                            return; 
-                        } 
-                        
-                        // Cloud has newer data OR app just loaded (memory version is 0)
-                        if (cloudTime > this.configVersion || this.configVersion === 0) {
-                            this.members = cloud.members ||[];
-                            this.roles = cloud.roles ||[];
-                            this.departments = cloud.departments ||[];
-                            this.shifts = cloud.shifts ||[];
-                            this.holidayList = cloud.holidayList ||[];
-                            this.masterPin = cloud.masterPin || this.masterPin;
-                            
-                            this.autoExportEnabled = cloud.autoExportEnabled || false;
-                            this.autoExportTime = cloud.autoExportTime || '18:00';
-                            this.lastAutoExportDate = cloud.lastAutoExportDate || '';
-                            
-                            this.configVersion = cloudTime;
-                        }
-
-                        if (cloudDataTime > this.dataVersion || this.dataVersion === 0) {
-                            this.attendanceData = cloud.attendanceData || this.attendanceData;
-                            this.punchLogs = cloud.punchLogs || this.punchLogs;
-                            this.leaveRequests = cloud.leaveRequests || this.leaveRequests;
-                            this.dataVersion = cloudDataTime;
-                        } else {
-                            const newAttendance = this.mergeDailyData(this.attendanceData, cloud.attendanceData);
-                            if (JSON.stringify(this.attendanceData) !== JSON.stringify(newAttendance)) {
-                                this.attendanceData = newAttendance;
-                            }
-
-                            const newPunches = this.mergePunchData(this.punchLogs, cloud.punchLogs);
-                            if (JSON.stringify(this.punchLogs) !== JSON.stringify(newPunches)) {
-                                this.punchLogs = newPunches;
-                            }
-
-                            const newLeaves = this.mergeLeaves(this.leaveRequests, cloud.leaveRequests);
-                            if (JSON.stringify(this.leaveRequests) !== JSON.stringify(newLeaves)) {
-                                this.leaveRequests = newLeaves;
-                            }
-                        }
-
-                        if (this.userSession && !this.members.find(m => m.id === this.userSession.id)) {
-                            this.userSession = null;
-                            this.view = 'portal';
-                            this.loginStep = 'id';
-                        }
-
-                        this.syncError = false;
-                        if (!silent) this.showNote("Vault Synced", "success");
-                    }
-                } catch (e) { 
-                    console.error("Cloud Pull Error:", e);
-                    this.syncError = true;
-                } finally { 
-                    this.isSyncing = false; 
-                    if (this.syncQueued) {
-                        this.syncToCloud();
-                    }
-                }
-            },
-
-            saveToLocal(triggerPush = true) {
-                // Local Storage is completely bypassed. Pushing to Cloud instead.
-                if (triggerPush) this.syncToCloud();
-            },
-
-            startBreak() {
-                if (!this.userSession) return;
-                const activeDate = this.getActiveShiftDate();
-                const uId = this.userSession.id;
-                if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
-                if (!this.punchLogs[activeDate][uId]) this.punchLogs[activeDate][uId] = { in: '', out: '', breaks:[] };
-                if (!this.punchLogs[activeDate][uId].breaks) this.punchLogs[activeDate][uId].breaks =[];
-                
-                this.punchLogs[activeDate][uId].breaks.push({ start: this.getCurrentTimeIST(), end: '' });
-                this.punchLogs = { ...this.punchLogs };
-                this.saveToLocal(true);
+        handleBreakUnlock() {
+            if (this.breakPinInput === this.userSession.pin) {
+                this.endBreak();
                 this.breakPinInput = '';
-                this.showNote("Break Started & Tool Locked", "success");
+                try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(e=>e); } catch(e){}
+            } else {
+                this.showNote("Invalid PIN.", "error"); this.breakPinInput = '';
+            }
+        },
+
+        async endBreak() {
+            if (!this.userSession) return;
+            const activeDate = this.getActiveShiftDate();
+            const uId = this.userSession.id;
+            const breaks = this.punchLogs[activeDate]?.[uId]?.breaks;
+            const endTime = this.getCurrentTimeIST();
+
+            if (breaks && breaks.length > 0 && !breaks[breaks.length - 1].end) {
+                breaks[breaks.length - 1].end = endTime;
+                this.punchLogs = { ...this.punchLogs };
                 
                 try {
-                    const elem = document.documentElement;
-                    if (elem.requestFullscreen) {
-                        const promise = elem.requestFullscreen();
-                        if (promise !== undefined) {
-                            promise.catch(e => console.log("Fullscreen blocked by browser policy. Using overlay mode instead.", e));
-                        }
-                    } else if (elem.webkitRequestFullscreen) {
-                        elem.webkitRequestFullscreen();
-                    } else if (elem.msRequestFullscreen) {
-                        elem.msRequestFullscreen();
-                    }
-                } catch(e) { console.log("Fullscreen request failed", e); }
-
-                setTimeout(() => { const el = document.getElementById('break-pin-input'); if(el) el.focus(); }, 100);
-            },
-
-            handleBreakUnlock() {
-                if (!this.userSession) return;
-                if (this.breakPinInput === this.userSession.pin) {
-                    this.endBreak();
-                    this.breakPinInput = '';
-                    
-                    try {
-                        if (document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement) {
-                            if (document.exitFullscreen) {
-                                const promise = document.exitFullscreen();
-                                if (promise !== undefined) {
-                                    promise.catch(e => console.log("Exit fullscreen silently failed.", e));
-                                }
-                            } else if (document.webkitExitFullscreen) {
-                                document.webkitExitFullscreen();
-                            } else if (document.msExitFullscreen) {
-                                document.msExitFullscreen();
-                            }
-                        }
-                    } catch(e) { console.log("Exit fullscreen failed", e); }
-
-                } else {
-                    this.showNote("Invalid PIN. Access Denied.", "error");
-                    this.breakPinInput = '';
-                }
-            },
-
-            endBreak() {
-                if (!this.userSession) return;
-                const activeDate = this.getActiveShiftDate();
-                const uId = this.userSession.id;
-                const breaks = this.punchLogs[activeDate]?.[uId]?.breaks;
+                    await this.supabase.from('break_logs')
+                        .update({ end_time: endTime })
+                        .match({ member_id: uId, log_date: activeDate })
+                        .is('end_time', null); 
+                } catch(e) { console.error("Break end error", e); }
                 
-                if (breaks && breaks.length > 0) {
-                    const lastBreak = breaks[breaks.length - 1];
-                    if (!lastBreak.end) {
-                        lastBreak.end = this.getCurrentTimeIST();
-                        this.punchLogs = { ...this.punchLogs };
-                        this.saveToLocal(true);
-                        this.showNote("Break Ended", "success");
+                this.showNote("Break Ended", "success");
+                this.scheduleNextCaptcha();
+            }
+        },
+
+        diffInMins(t1, t2) {
+            if(!t1 || !t2) return 0;
+            const p = (str) => {
+                const m = str.match(/(\d+):(\d+)\s*(AM|PM)/i);
+                if(!m) return new Date();
+                let h = parseInt(m[1], 10);
+                if(m[3].toUpperCase() === 'PM' && h < 12) h += 12;
+                if(m[3].toUpperCase() === 'AM' && h === 12) h = 0;
+                const d = new Date(); d.setHours(h, parseInt(m[2], 10), 0, 0); return d;
+            };
+            let diff = (p(t2) - p(t1)) / 60000;
+            return Math.floor(diff < 0 ? diff + 1440 : diff);
+        },
+        calculateTotalBreakMins(breaks) {
+            if (!breaks || !breaks.length) return 0;
+            const now = this.getCurrentTimeIST();
+            return breaks.reduce((acc, b) => acc + this.diffInMins(b.start, b.end || now), 0);
+        },
+        getActiveMinsForLog(log, dateKey) {
+            if (!log || !log.in) return 0;
+            const outTime = log.out || (dateKey === getISTString() ? this.getCurrentTimeIST() : null);
+            if (!outTime) return 0;
+            return Math.max(0, this.diffInMins(log.in, outTime) - this.calculateTotalBreakMins(log.breaks));
+        },
+        formatBreakDisplay(mins) {
+            if (!mins || mins <= 0) return '0m';
+            return Math.floor(mins/60) > 0 ? `${Math.floor(mins/60)}h ${mins%60}m` : `${mins}m`;
+        },
+
+        get dashboardStats() {
+            const dates = this.getFilteredDatesByPeriod(this.dashboardPeriod);
+            const totals = {};
+            this.statusOptions.forEach(o => totals[o.id] = 0);
+            dates.forEach(dk => {
+                this.filteredMembers.forEach(m => { if(this.attendanceData[dk]?.[m.id]) totals[this.attendanceData[dk][m.id]]++; });
+            });
+            return { totals, grandTotal: Object.values(totals).reduce((a, b) => a + b, 0) };
+        },
+
+        get individualStats() {
+            if (!this.userSession) return null;
+            const user = this.members.find(m => m.id === this.userSession.id) || this.userSession;
+            const id = user.id, curRef = getISTDateObject(), curY = curRef.getFullYear(), curM = curRef.getMonth() + 1, curD = curRef.getDate();
+            const stats = { periodTotals: {}, history: [] };
+            this.statusOptions.forEach(opt => stats.periodTotals[opt.id] = 0);
+
+            for (let i = 0; i < 15; i++) {
+                const day = getISTDateObject(); day.setDate(day.getDate() - i);
+                const dk = getISTString(day);
+                const sObj = this.statusOptions.find(s => s.id === this.attendanceData[dk]?.[id]) || { id: '-', label: 'Unrecorded', color: 'text-zinc-400', bg: 'bg-zinc-100/50', display: '-' };
+                stats.history.push({ date: dk, label: day.toLocaleDateString('en-US', {month:'short', day:'numeric', weekday:'short'}), status: sObj, punch: this.punchLogs[dk]?.[id] || {} });
+            }
+
+            let mtd = { p:0, lv:0, prm:0, lop:0, activeMins:0, breakMins:0, daysPunched:0 };
+            let ytd = { lv:0, prm:0, co:0, activeMins:0, breakMins:0, daysPunched:0 };
+
+            Object.keys(this.attendanceData).forEach(dk => {
+                const s = this.attendanceData[dk][id];
+                if (!s) return;
+                const [dy, dm] = dk.split('-').map(Number);
+                if (dy === curY) {
+                    if (s === 'co') ytd.co += 1;
+                    if (s === 'a') ytd.lv += 1; if (s === 'h') ytd.lv += 0.5;
+                    if (s === '1p') ytd.prm += 1; if (s === '2p') ytd.prm += 2;
+                    if (dm === curM) {
+                        if (['p','1p','2p','co'].includes(s)) mtd.p += 1;
+                        if (s === 'h') { mtd.p += 0.5; mtd.lv += 0.5; }
+                        if (s === 'a') mtd.lv += 1;
+                        if (s === 'lop') mtd.lop += 1;
                     }
                 }
-            },
+            });
 
-            diffInMins(t1, t2) {
-                if(!t1 || !t2) return 0;
-                const parseTime = (timeStr) => {
-                    const m = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
-                    if (!m) return new Date();
-                    let h = parseInt(m[1], 10);
-                    if (m[3].toUpperCase() === 'PM' && h < 12) h += 12;
-                    if (m[3].toUpperCase() === 'AM' && h === 12) h = 0;
-                    const d = new Date();
-                    d.setHours(h, parseInt(m[2], 10), 0, 0);
-                    return d;
-                };
-                const d1 = parseTime(t1);
-                const d2 = parseTime(t2);
-                let diff = (d2 - d1) / 1000 / 60;
-                if(diff < 0) diff += 24 * 60; 
-                return Math.floor(diff);
-            },
-
-            calculateTotalBreakMins(breaks) {
-                if (!breaks || !Array.isArray(breaks) || breaks.length === 0) return 0;
-                let total = 0;
-                const now = this.getCurrentTimeIST();
-                breaks.forEach(b => {
-                    const start = b.start;
-                    const end = b.end || now; 
-                    total += this.diffInMins(start, end);
-                });
-                return total;
-            },
-
-            getActiveMinsForLog(log, dateKey) {
-                if (!log || !log.in) return 0;
-                let outTime = log.out;
-                const todayStr = getISTString();
-                if (!outTime) {
-                    if (dateKey === todayStr) {
-                        outTime = this.getCurrentTimeIST();
-                    } else {
-                        return 0; 
+            Object.keys(this.punchLogs).forEach(dk => {
+                const log = this.punchLogs[dk]?.[id];
+                if (!log || !log.in) return;
+                const [dy, dm] = dk.split('-').map(Number);
+                if (dy === curY) {
+                    ytd.breakMins += this.calculateTotalBreakMins(log.breaks);
+                    ytd.activeMins += this.getActiveMinsForLog(log, dk);
+                    ytd.daysPunched++;
+                    if (dm === curM) {
+                        mtd.breakMins += this.calculateTotalBreakMins(log.breaks);
+                        mtd.activeMins += this.getActiveMinsForLog(log, dk);
+                        mtd.daysPunched++;
                     }
                 }
-                const totalMins = this.diffInMins(log.in, outTime);
-                const breakMins = this.calculateTotalBreakMins(log.breaks);
-                return Math.max(0, totalMins - breakMins);
-            },
+            });
 
-            formatBreakDisplay(mins) {
-                if (!mins || mins <= 0) return '0m';
-                const h = Math.floor(mins / 60);
-                const m = mins % 60;
-                return h > 0 ? `${h}h ${m}m` : `${m}m`;
-            },
-
-            get dashboardStats() {
-                const dates = this.getFilteredDatesByPeriod(this.dashboardPeriod);
-                const totals = {};
-                this.statusOptions.forEach(opt => totals[opt.id] = 0);
-                dates.forEach(dateKey => {
-                    const dayData = this.attendanceData[dateKey] || {};
-                    this.filteredMembers.forEach(m => {
-                        const status = dayData[m.id];
-                        if (status) totals[status]++;
-                    });
-                });
-                const grandTotal = Object.values(totals).reduce((a, b) => a + b, 0);
-                return { totals, grandTotal };
-            },
-
-            get individualStats() {
-                if (!this.userSession) return null;
-                const currentUser = this.members.find(m => m.id === this.userSession.id) || this.userSession;
-                const id = currentUser.id;
-                const istRef = getISTDateObject();
-                
-                const stats = { periodTotals: {}, history:[] };
-                this.statusOptions.forEach(opt => stats.periodTotals[opt.id] = 0);
-                
-                const curY = istRef.getFullYear();
-                const curM = istRef.getMonth() + 1;
-                const curD = istRef.getDate();
-
-                for (let i = 0; i < 15; i++) {
-                    const dayRef = getISTDateObject();
-                    dayRef.setDate(dayRef.getDate() - i);
-                    const dk = getISTString(dayRef);
-                    
-                    const sId = this.attendanceData[dk]?.[id];
-                    const sObj = this.statusOptions.find(s => s.id === sId) || { id: '-', label: 'Unrecorded', color: 'text-zinc-400', bg: 'bg-zinc-100/50', display: '-' };
-                    const punchLog = this.punchLogs[dk]?.[id] || { in: '--:--', out: '--:--', breaks:[] };
-                    
-                    stats.history.push({ 
-                        date: dk, 
-                        label: dayRef.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' }), 
-                        status: sObj, 
-                        punch: punchLog 
-                    });
+            return {
+                ...stats,
+                isAnniversary: user.doj && user.doj.split('-')[1] == curM && user.doj.split('-')[2] == curD,
+                isBirthday: user.dob && user.dob.split('-')[1] == curM && user.dob.split('-')[2] == curD,
+                holidays: this.holidayList.filter(h => h.dept === 'All' || h.dept === user.dept),
+                metrics: {
+                    presentMTD: mtd.p, lvMTD: mtd.lv, plAllowed: user.allowedPL || 0, slAllowed: user.allowedSL || 0, coEarned: ytd.co,
+                    lvAvailYTD: ((user.allowedPL||0) + ytd.co + (user.allowedSL||0)) - ytd.lv,
+                    prmAvailYTD: ((user.allowedPerm||0) * curM) - ytd.prm, prmUsedYTD: ytd.prm, lopMTD: mtd.lop,
+                    avgActiveMTD: mtd.daysPunched ? Math.floor(mtd.activeMins/mtd.daysPunched) : 0,
+                    avgBreakMTD: mtd.daysPunched ? Math.floor(mtd.breakMins/mtd.daysPunched) : 0,
+                    avgActiveYTD: ytd.daysPunched ? Math.floor(ytd.activeMins/ytd.daysPunched) : 0,
+                    avgBreakYTD: ytd.daysPunched ? Math.floor(ytd.breakMins/ytd.daysPunched) : 0
                 }
+            };
+        },
 
-                Object.keys(this.attendanceData).forEach(dateKey => {
-                    const [y, m] = dateKey.split('-').map(Number);
-                    const status = this.attendanceData[dateKey][id];
-                    if (status) {
-                        if (this.portalPeriod === 'month' && y === curY && m === curM) stats.periodTotals[status]++;
-                        else if (this.portalPeriod === 'year' && y === curY) stats.periodTotals[status]++;
-                    }
-                });
+        get rangeSummaryData() {
+            const sDate = this.summaryStartDate, eDate = this.summaryEndDate;
+            const endY = eDate ? parseInt(eDate.split('-')[0]) : getISTDateObject().getFullYear();
+            const endM = eDate ? parseInt(eDate.split('-')[1]) : (getISTDateObject().getMonth() + 1);
 
-                let isAnniversary = false;
-                if (currentUser.doj) {
-                    const parts = currentUser.doj.split('-');
-                    if (parts.length === 3 && parseInt(parts[1]) === curM && parseInt(parts[2]) === curD) isAnniversary = true;
-                }
-
-                let isBirthday = false;
-                if (currentUser.dob) {
-                    const parts = currentUser.dob.split('-');
-                    if (parts.length === 3 && parseInt(parts[1]) === curM && parseInt(parts[2]) === curD) isBirthday = true;
-                }
-
-                let presentMTD = 0, lvMTD = 0, lvYTDUsed = 0, prmYTDUsed = 0, lopMTD = 0;
-                let breakMinsMTD = 0, breakMinsYTD = 0;
-                let activeMinsMTD = 0, activeMinsYTD = 0;
-                let daysPunchMTD = 0, daysPunchYTD = 0;
-                let coEarnedYTD = 0;
+            return this.filteredMembers.map(m => {
+                let d = { presentMTD:0, absentMTD:0, halfMTD:0, prmHrsMTD:0, lopMTD:0, holidayMTD:0, lvYTD:0, prmYTDUsed:0, avgActiveMTD:0, avgBreakMTD:0, avgActiveYTD:0, avgBreakYTD:0 };
+                let ytd={ act:0, brk:0, days:0 }, mtd={ act:0, brk:0, days:0 };
 
                 Object.keys(this.attendanceData).forEach(dk => {
-                    const s = this.attendanceData[dk][id];
+                    const s = this.attendanceData[dk]?.[m.id];
                     if (!s) return;
-                    const [dy, dm] = dk.split('-').map(Number);
-                    if (dy === curY) {
-                        if (s === 'co') coEarnedYTD += 1;
-                        if (s === 'a') lvYTDUsed += 1;
-                        if (s === 'h') lvYTDUsed += 0.5;
-                        if (s === '1p') prmYTDUsed += 1;
-                        if (s === '2p') prmYTDUsed += 2;
-                        if (dm === curM) {
-                            if (['p','1p','2p','co'].includes(s)) presentMTD += 1;
-                            if (s === 'h') { presentMTD += 0.5; lvMTD += 0.5; }
-                            if (s === 'a') lvMTD += 1;
-                            if (s === 'lop') lopMTD += 1;
-                        }
+                    const [y, mm] = dk.split('-').map(Number);
+                    if (y === endY && dk <= eDate) {
+                        if (s === 'a') d.lvYTD += 1; if (s === 'h') d.lvYTD += 0.5;
+                        if (s === '1p') d.prmYTDUsed += 1; if (s === '2p') d.prmYTDUsed += 2;
+                    }
+                    if (dk >= sDate && dk <= eDate) {
+                        if (s === 'p') d.presentMTD += 1;
+                        if (s === 'a') d.absentMTD += 1;
+                        if (s === 'h') { d.halfMTD += 1; d.presentMTD += 0.5; }
+                        if (s === '1p') { d.presentMTD += 1; d.prmHrsMTD += 1; }
+                        if (s === '2p') { d.presentMTD += 1; d.prmHrsMTD += 2; }
+                        if (s === 'lop') d.lopMTD += 1; 
+                        if (s === 'fh') d.holidayMTD += 1;
                     }
                 });
 
                 Object.keys(this.punchLogs).forEach(dk => {
-                    const log = this.punchLogs[dk]?.[id];
+                    const log = this.punchLogs[dk]?.[m.id];
                     if (!log || !log.in) return;
-
-                    const bMins = this.calculateTotalBreakMins(log.breaks);
-                    const aMins = this.getActiveMinsForLog(log, dk);
-                    
-                    const[dy, dm] = dk.split('-').map(Number);
-                    if (dy === curY) {
-                        breakMinsYTD += bMins;
-                        activeMinsYTD += aMins;
-                        daysPunchYTD++;
-                        if (dm === curM) {
-                            breakMinsMTD += bMins;
-                            activeMinsMTD += aMins;
-                            daysPunchMTD++;
-                        }
+                    const [y, mm] = dk.split('-').map(Number);
+                    if (y === endY && dk <= eDate) {
+                        ytd.act += this.getActiveMinsForLog(log, dk); ytd.brk += this.calculateTotalBreakMins(log.breaks); ytd.days++;
+                        if (mm === endM) { mtd.act += this.getActiveMinsForLog(log, dk); mtd.brk += this.calculateTotalBreakMins(log.breaks); mtd.days++; }
                     }
                 });
 
-                const userDeptStr = (currentUser.dept || "General").trim().toLowerCase();
-                const deptHolidays = this.holidayList.filter(h => {
-                    const hDeptStr = (h.dept || "All").trim().toLowerCase();
-                    return hDeptStr === 'all' || hDeptStr === userDeptStr;
-                });
+                d.avgActiveMTD = mtd.days ? Math.floor(mtd.act/mtd.days) : 0; d.avgBreakMTD = mtd.days ? Math.floor(mtd.brk/mtd.days) : 0;
+                d.avgActiveYTD = ytd.days ? Math.floor(ytd.act/ytd.days) : 0; d.avgBreakYTD = ytd.days ? Math.floor(ytd.brk/ytd.days) : 0;
+                return { ...m, ...d };
+            });
+        },
 
-                return {
-                    ...stats,
-                    isAnniversary,
-                    isBirthday,
-                    holidays: deptHolidays,
-                    metrics: {
-                        presentMTD, lvMTD, plAllowed: currentUser.allowedPL ?? 0, slAllowed: currentUser.allowedSL ?? 0,
-                        coEarned: coEarnedYTD,
-                        lvAvailYTD: (Number(currentUser.allowedPL ?? 0) + coEarnedYTD + Number(currentUser.allowedSL ?? 0)) - lvYTDUsed,
-                        prmMonthlyLimit: currentUser.allowedPerm ?? 0,
-                        prmUsedYTD: prmYTDUsed,
-                        prmAvailYTD: ((currentUser.allowedPerm ?? 0) * curM) - prmYTDUsed,
-                        lopMTD: lopMTD,
-                        avgActiveMTD: daysPunchMTD > 0 ? Math.floor(activeMinsMTD / daysPunchMTD) : 0,
-                        avgBreakMTD: daysPunchMTD > 0 ? Math.floor(breakMinsMTD / daysPunchMTD) : 0,
-                        avgActiveYTD: daysPunchYTD > 0 ? Math.floor(activeMinsYTD / daysPunchYTD) : 0,
-                        avgBreakYTD: daysPunchYTD > 0 ? Math.floor(breakMinsYTD / daysPunchYTD) : 0
-                    }
-                };
-            },
-
-            get rangeSummaryData() {
-                const sDate = this.summaryStartDate;
-                const eDate = this.summaryEndDate;
-                const endYear = eDate ? parseInt(eDate.split('-')[0]) : getISTDateObject().getFullYear();
-                const endMonth = eDate ? parseInt(eDate.split('-')[1]) : (getISTDateObject().getMonth() + 1);
-
-                return this.filteredMembers.map(member => {
-                    let presentMTD = 0, absentMTD = 0, halfMTD = 0, prmHrsMTD = 0, lopMTD = 0, holidayMTD = 0;
-                    let lvYTD = 0, prmYTDUsed = 0;
-                    
-                    let totalActiveMTD = 0, totalBreakMTD = 0, daysWithPunchMTD = 0;
-                    let totalActiveYTD = 0, totalBreakYTD = 0, daysWithPunchYTD = 0;
-
-                    Object.keys(this.attendanceData).forEach(dateKey => {
-                        const [y, m] = dateKey.split('-').map(Number);
-                        const status = this.attendanceData[dateKey]?.[member.id];
-                        if (!status) return;
-                        
-                        if (y === endYear && dateKey <= eDate) {
-                            if (status === 'a') lvYTD += 1;
-                            if (status === 'h') lvYTD += 0.5;
-                            if (status === '1p') prmYTDUsed += 1;
-                            if (status === '2p') prmYTDUsed += 2;
-                        }
-                        
-                        if (dateKey >= sDate && dateKey <= eDate) {
-                            if (status === 'p') presentMTD += 1;
-                            if (status === 'a') absentMTD += 1;
-                            if (status === 'h') { halfMTD += 1; presentMTD += 0.5; }
-                            if (status === '1p') { presentMTD += 1; prmHrsMTD += 1; }
-                            if (status === '2p') { presentMTD += 1; prmHrsMTD += 2; }
-                            if (status === 'lop') lopMTD += 1; 
-                            if (status === 'fh') holidayMTD += 1;
-                        }
-                    });
-
-                    Object.keys(this.punchLogs).forEach(dateKey => {
-                        const log = this.punchLogs[dateKey]?.[member.id];
-                        if (!log || !log.in) return;
-
-                        const [y, m] = dateKey.split('-').map(Number);
-                        if (y === endYear && dateKey <= eDate) {
-                            const aMins = this.getActiveMinsForLog(log, dateKey);
-                            const bMins = this.calculateTotalBreakMins(log.breaks);
-
-                            totalActiveYTD += aMins;
-                            totalBreakYTD += bMins;
-                            daysWithPunchYTD++;
-
-                            if (m === endMonth) {
-                                totalActiveMTD += aMins;
-                                totalBreakMTD += bMins;
-                                daysWithPunchMTD++;
-                            }
-                        }
-                    });
-
-                    const avgActiveMTD = daysWithPunchMTD > 0 ? Math.floor(totalActiveMTD / daysWithPunchMTD) : 0;
-                    const avgBreakMTD = daysWithPunchMTD > 0 ? Math.floor(totalBreakMTD / daysWithPunchMTD) : 0;
-                    const avgActiveYTD = daysWithPunchYTD > 0 ? Math.floor(totalActiveYTD / daysWithPunchYTD) : 0;
-                    const avgBreakYTD = daysWithPunchYTD > 0 ? Math.floor(totalBreakYTD / daysWithPunchYTD) : 0;
-
-                    return { 
-                        ...member, 
-                        presentMTD, absentMTD, halfMTD, prmHrsMTD, lopMTD, holidayMTD,
-                        lvYTD, prmYTDUsed,
-                        avgActiveMTD, avgBreakMTD, avgActiveYTD, avgBreakYTD
-                    };
-                });
-            },
-
-            getFilteredDatesByPeriod(period) {
-                const ist = getISTDateObject();
-                return Object.keys(this.attendanceData).filter(d => {
-                    const[dy, dm, dd] = d.split('-').map(Number);
-                    if (period === 'day') return dy === ist.getFullYear() && dm === (ist.getMonth() + 1) && dd === ist.getDate();
-                    if (period === 'month') return dy === ist.getFullYear() && dm === (ist.getMonth() + 1);
-                    if (period === 'year') return dy === ist.getFullYear();
-                    return false;
-                });
-            },
-
-            get availablePersonnelOptions() {
-                if (!this.filterDept) return this.members;
-                const fDept = this.filterDept.trim().toLowerCase();
-                return this.members.filter(m => (m.dept || 'General').trim().toLowerCase() === fDept);
-            },
-
-            get filteredMembers() { 
-                return this.members.filter(m => {
-                    const fNameMatch = !this.filterName || m.id === this.filterName;
-                    const mDept = (m.dept || 'General').trim().toLowerCase();
-                    const fDept = (this.filterDept || '').trim().toLowerCase();
-                    const fDeptMatch = !this.filterDept || mDept === fDept;
-                    return fNameMatch && fDeptMatch;
-                });
-            },
-
-            handleNameFilterChange() {
-                if (this.filterName) {
-                    const member = this.members.find(m => m.id === this.filterName);
-                    if (member) this.filterDept = member.dept;
-                }
-            },
-
-            markAttendance(id, s) { 
-                if (!this.attendanceData[this.currentDate]) this.attendanceData[this.currentDate] = {}; 
-                
-                if (this.attendanceData[this.currentDate][id] === s) {
-                    this.attendanceData[this.currentDate][id] = ""; 
-                } else {
-                    this.attendanceData[this.currentDate][id] = s; 
-                }
-
-                this.attendanceData = { ...this.attendanceData }; 
-                if (this.isAdminAuthenticated) this.markDataUpdated();
-                this.saveToLocal(); 
-            },
-
-            isMarked(id, s) { return this.attendanceData[this.currentDate]?.[id] === s; },
-            
-            getTimeInputVal(timeStr) {
-                if (!timeStr || timeStr === '--:--') return '';
-                if (/^\d{2}:\d{2}$/.test(timeStr)) return timeStr; 
-                const m = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
-                if (!m) return '';
-                let h = parseInt(m[1], 10);
-                if (m[3].toUpperCase() === 'PM' && h < 12) h += 12;
-                if (m[3].toUpperCase() === 'AM' && h === 12) h = 0;
-                return `${h.toString().padStart(2, '0')}:${m[2]}`;
-            },
-
-            commitEditLog() {
-                if (!this.editingLogId) return;
-                const id = this.editingLogId;
-                if (!this.punchLogs[this.currentDate]) this.punchLogs[this.currentDate] = {};
-                if (!this.punchLogs[this.currentDate][id]) this.punchLogs[this.currentDate][id] = { in: '', out: '', breaks:[] };
-                
-                const formatTime = (timeValue) => {
-                    if (!timeValue) return '';
-                    const[h, m] = timeValue.split(':');
-                    let hNum = parseInt(h, 10);
-                    const ampm = hNum >= 12 ? 'PM' : 'AM';
-                    hNum = hNum % 12 || 12;
-                    return `${hNum.toString().padStart(2, '0')}:${m} ${ampm}`;
-                };
-
-                this.punchLogs[this.currentDate][id].in = formatTime(this.tempPunches.in);
-                this.punchLogs[this.currentDate][id].out = formatTime(this.tempPunches.out);
-                this.punchLogs = { ...this.punchLogs };
-                
-                if (this.isAdminAuthenticated) this.markDataUpdated();
-                this.saveToLocal(true);
-                this.showNote("Punch Timings Saved", "success");
-                
-                this.editingLogId = null;
-            },
-
-            adminToggleBreak(mId) {
-                if (!this.isAdminAuthenticated) return this.showNote("Admin access required", "error");
-
-                const activeDate = this.currentDate;
-                if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
-                if (!this.punchLogs[activeDate][mId]) this.punchLogs[activeDate][mId] = { in: '', out: '', breaks:[] };
-                if (!this.punchLogs[activeDate][mId].breaks) this.punchLogs[activeDate][mId].breaks =[];
-
-                const breaks = this.punchLogs[activeDate][mId].breaks;
-                const isOnBreak = breaks.length > 0 && !breaks[breaks.length - 1].end;
-
-                if (isOnBreak) {
-                    breaks[breaks.length - 1].end = this.getCurrentTimeIST();
-                    this.showNote("Break Force-Ended by Admin", "success");
-                } else {
-                    breaks.push({ start: this.getCurrentTimeIST(), end: '' });
-                    this.showNote("Break Force-Started by Admin", "success");
-                }
-
-                this.punchLogs = { ...this.punchLogs };
-                this.markDataUpdated();
-                this.saveToLocal(true);
-            },
-
-            formatDate(d) { 
-                if (!d) return '...'; 
+        getFilteredDatesByPeriod(p) {
+            const ist = getISTDateObject();
+            return Object.keys(this.attendanceData).filter(d => {
                 const[y, m, day] = d.split('-').map(Number);
-                const dt = new Date(y, m - 1, day);
-                return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' }); 
-            },
+                if (p === 'day') return y === ist.getFullYear() && m === (ist.getMonth() + 1) && day === ist.getDate();
+                if (p === 'month') return y === ist.getFullYear() && m === (ist.getMonth() + 1);
+                return y === ist.getFullYear();
+            });
+        },
+        get availablePersonnelOptions() { return this.filterDept ? this.members.filter(m => m.dept === this.filterDept) : this.members; },
+        get filteredMembers() { return this.members.filter(m => (!this.filterName || m.id === this.filterName) && (!this.filterDept || m.dept === this.filterDept)); },
+        handleNameFilterChange() { if (this.filterName) this.filterDept = this.members.find(m => m.id === this.filterName)?.dept; },
+
+        markAttendance(id, s) { 
+            if (!this.attendanceData[this.currentDate]) this.attendanceData[this.currentDate] = {}; 
+            const newStatus = this.attendanceData[this.currentDate][id] === s ? "" : s;
+            this.attendanceData[this.currentDate][id] = newStatus;
+            this.attendanceData = { ...this.attendanceData }; 
+            this.upsertAttCloud(this.currentDate, id, newStatus); // Targeted Save
+        },
+        isMarked(id, s) { return this.attendanceData[this.currentDate]?.[id] === s; },
+        getTimeInputVal(tStr) {
+            if (!tStr || tStr === '--:--') return '';
+            if (/^\d{2}:\d{2}$/.test(tStr)) return tStr; 
+            const m = tStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+            if (!m) return '';
+            let h = parseInt(m[1], 10);
+            if (m[3].toUpperCase() === 'PM' && h < 12) h += 12;
+            if (m[3].toUpperCase() === 'AM' && h === 12) h = 0;
+            return `${h.toString().padStart(2, '0')}:${m[2]}`;
+        },
+
+        commitEditLog() {
+            if (!this.editingLogId) return;
+            const id = this.editingLogId;
+            if (!this.punchLogs[this.currentDate]) this.punchLogs[this.currentDate] = {};
+            if (!this.punchLogs[this.currentDate][id]) this.punchLogs[this.currentDate][id] = { in: '', out: '', breaks:[], captchas: [] };
             
-            changeDate(n) { 
-                const [y, m, d] = this.currentDate.split('-').map(Number);
-                const dt = new Date(y, m - 1, d);
-                dt.setDate(dt.getDate() + n); 
-                this.currentDate = getISTString(dt); 
-            },
+            const formatT = (t) => {
+                if(!t) return ''; const[h, m] = t.split(':');
+                return `${(parseInt(h,10)%12||12).toString().padStart(2,'0')}:${m} ${parseInt(h,10)>=12?'PM':'AM'}`;
+            };
+            this.punchLogs[this.currentDate][id].in = formatT(this.tempPunches.in);
+            this.punchLogs[this.currentDate][id].out = formatT(this.tempPunches.out);
+            this.punchLogs = { ...this.punchLogs };
+            this.upsertPunchCloud(this.currentDate, id); // Targeted Save
+            this.showNote("Punch Timings Saved", "success");
+            this.editingLogId = null;
+        },
+
+        async adminToggleBreak(mId) {
+            if (!this.isAdminAuthenticated) return;
+            if (!this.punchLogs[this.currentDate]) this.punchLogs[this.currentDate] = {};
+            if (!this.punchLogs[this.currentDate][mId]) this.punchLogs[this.currentDate][mId] = { in: '', out: '', breaks:[], captchas: [] };
             
-            isMarkedPortal(s) { return this.attendanceData[this.getActiveShiftDate()]?.[this.userSession?.id] === s; },
+            const breaks = this.punchLogs[this.currentDate][mId].breaks;
+            const currentTime = this.getCurrentTimeIST();
+
+            try {
+                if (breaks.length > 0 && !breaks[breaks.length - 1].end) {
+                    breaks[breaks.length - 1].end = currentTime;
+                    await this.supabase.from('break_logs')
+                        .update({ end_time: currentTime })
+                        .match({ member_id: mId, log_date: this.currentDate })
+                        .is('end_time', null);
+                    this.showNote("Break Force-Ended", "success");
+                } else {
+                    breaks.push({ start: currentTime, end: '' });
+                    await this.supabase.from('break_logs').insert({
+                        member_id: mId, log_date: this.currentDate, start_time: currentTime
+                    });
+                    this.showNote("Break Force-Started", "success");
+                }
+                this.punchLogs = { ...this.punchLogs };
+            } catch(e) { 
+                console.error("Admin break toggle error", e); 
+                this.showNote("Error saving break", "error");
+            }
+        },
+
+        formatDate(d) { return d ? new Date(d.split('-').map(Number)[0], d.split('-').map(Number)[1] - 1, d.split('-').map(Number)[2]).toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' }) : '...'; },
+        changeDate(n) { const dt = new Date(this.currentDate.split('-').map(Number)[0], this.currentDate.split('-').map(Number)[1] - 1, this.currentDate.split('-').map(Number)[2]); dt.setDate(dt.getDate() + n); this.currentDate = getISTString(dt); },
+        isMarkedPortal(s) { return this.attendanceData[this.getActiveShiftDate()]?.[this.userSession?.id] === s; },
+        
+        markPortalAttendance(s) {
+            if (!this.userSession) return;
+            const activeDate = this.getActiveShiftDate(), uId = this.userSession.id;
+            if (!this.attendanceData[activeDate]) this.attendanceData[activeDate] = {};
+            this.attendanceData[activeDate][uId] = s;
+            if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
+            if (!this.punchLogs[activeDate][uId] || !this.punchLogs[activeDate][uId].in) this.punchLogs[activeDate][uId] = { in: this.getCurrentTimeIST(), out: '', breaks:[], captchas:[] };
             
-            markPortalAttendance(s) {
-                if (!this.userSession) return;
-                const activeDate = this.getActiveShiftDate();
-                const uId = this.userSession.id;
-                if (!this.attendanceData[activeDate]) this.attendanceData[activeDate] = {};
-                this.attendanceData[activeDate][uId] = s;
+            this.attendanceData = { ...this.attendanceData };
+            this.punchLogs = { ...this.punchLogs };
+            
+            this.upsertAttCloud(activeDate, uId, s); // Targeted Save
+            this.upsertPunchCloud(activeDate, uId); // Targeted Save
+            this.showNote("Shift Record Updated", "success");
+            this.scheduleNextCaptcha();
+        },
+        
+        initiateLogout() { if (!this.userSession) return; this.logoutTimePreview = this.getCurrentTimeIST(); this.showLogoutModal = true; },
+        confirmLogoutPortal() {
+            const activeDate = this.getActiveShiftDate(), uId = this.userSession.id;
+            if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
+            if (!this.punchLogs[activeDate][uId]) this.punchLogs[activeDate][uId] = { in: '', out: '', breaks:[], captchas: [] };
+            const breaks = this.punchLogs[activeDate][uId].breaks;
+            if (breaks?.length > 0 && !breaks[breaks.length - 1].end) breaks[breaks.length - 1].end = this.logoutTimePreview;
+            this.punchLogs[activeDate][uId].out = this.logoutTimePreview;
+            this.punchLogs = { ...this.punchLogs };
+            
+            this.upsertPunchCloud(activeDate, uId); // Targeted Save
+            this.showLogoutModal = false; this.logoutUser(); this.showNote("Shift Logged Out", "success");
+        },
+
+        toggleEditLog(id) {
+            if (this.editingLogId === id) this.commitEditLog();
+            else { if (this.editingLogId) this.commitEditLog(); this.editingLogId = id; this.tempPunches = { in: this.getTimeInputVal(this.punchLogs[this.currentDate]?.[id]?.in), out: this.getTimeInputVal(this.punchLogs[this.currentDate]?.[id]?.out) }; }
+        },
+
+        startEdit(m) { this.isEditing = true; this.newMember = JSON.parse(JSON.stringify(m)); this.isAddingMember = true; },
+        resetMemberForm() { this.isAddingMember = false; this.isEditing = false; this.newMember = { empId: '', firstName: '', lastName: '', dept: 'General', role: 'Staff', shift: 'General Shift', allowedPL: 0, allowedSL: 0, allowedPerm: 0, doj: '', doe: '', dob: '', pin: '', captchaEnabled: false }; },
+        
+        handleIdEntry() { 
+            const found = this.members.find(m => m.empId.trim().toUpperCase() === this.loginIdInput.trim().toUpperCase()); 
+            if (found) { this.tempUser = JSON.parse(JSON.stringify(found)); this.loginStep = !found.pin ? 'setup' : 'pin'; setTimeout(() => document.getElementById(this.loginStep === 'pin' ? 'login-pin-input' : 'setup-pin-input')?.focus(), 50); } 
+            else this.showNote("Invalid ID", "error"); 
+        },
+        
+        handlePinVerification() { 
+            const uid = this.tempUser.id;
+            if (this.userLockoutUntil[uid] && Date.now() < this.userLockoutUntil[uid]) { this.loginPinInput = ''; return this.showNote(`Account locked. Try again later`, "error"); }
+            if (this.loginPinInput === this.tempUser.pin) { 
+                this.userFailedAttempts[uid] = 0; this.userSession = JSON.parse(JSON.stringify(this.tempUser)); 
+                const activeDate = this.getActiveShiftDate(), uId = this.userSession.id;
+                if (!this.attendanceData[activeDate]) this.attendanceData[activeDate] = {}; 
+                if (!this.attendanceData[activeDate][uId]) {
+                    this.attendanceData[activeDate][uId] = 'p'; 
+                    this.upsertAttCloud(activeDate, uId, 'p'); // Targeted Save
+                }
                 if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
                 if (!this.punchLogs[activeDate][uId] || !this.punchLogs[activeDate][uId].in) {
-                    this.punchLogs[activeDate][uId] = { in: this.getCurrentTimeIST(), out: '', breaks:[] };
+                    this.punchLogs[activeDate][uId] = { in: this.getCurrentTimeIST(), out: '', breaks:[], captchas:[] };
+                    this.upsertPunchCloud(activeDate, uId); // Targeted Save
                 }
-                this.attendanceData = { ...this.attendanceData };
-                this.punchLogs = { ...this.punchLogs };
-                this.saveToLocal(true);
-                this.showNote("Shift Record Updated", "success");
-            },
-            
-            initiateLogout() {
-                if (!this.userSession) return;
-                this.logoutTimePreview = this.getCurrentTimeIST();
-                this.showLogoutModal = true;
-            },
+                this.attendanceData = { ...this.attendanceData }; this.punchLogs = { ...this.punchLogs };
+                this.loginStep = 'id'; this.loginIdInput = ''; this.loginPinInput = ''; this.tempUser = null; 
+                this.scheduleNextCaptcha();
+            } else { 
+                this.userFailedAttempts[uid] = (this.userFailedAttempts[uid] || 0) + 1; this.loginPinInput = '';
+                if (this.userFailedAttempts[uid] >= 3) { this.userLockoutUntil[uid] = Date.now() + 30000; this.userFailedAttempts[uid] = 0; this.showNote("Too many failed attempts. Locked for 30s.", "error"); } 
+                else this.showNote(`Invalid PIN (${3 - this.userFailedAttempts[uid]} attempts left)`, "error"); 
+            } 
+        },
 
-            confirmLogoutPortal() {
-                if (!this.userSession) return;
-                const activeDate = this.getActiveShiftDate();
-                const uId = this.userSession.id;
-                
-                if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
-                if (!this.punchLogs[activeDate][uId]) this.punchLogs[activeDate][uId] = { in: '', out: '', breaks:[] };
-                
-                const breaks = this.punchLogs[activeDate][uId].breaks;
-                if (breaks && breaks.length > 0) {
-                    const lastBreak = breaks[breaks.length - 1];
-                    if (!lastBreak.end) {
-                        lastBreak.end = this.logoutTimePreview;
-                    }
-                }
-
-                this.punchLogs[activeDate][uId].out = this.logoutTimePreview;
-                this.punchLogs = { ...this.punchLogs };
-                this.saveToLocal(true);
-                this.showLogoutModal = false;
-                this.logoutUser();
-                this.showNote("Shift Logged Out Successfully", "success");
-            },
-
-            toggleEditLog(id) {
-                if (this.editingLogId === id) {
-                    this.commitEditLog();
-                } else {
-                    if (this.editingLogId) this.commitEditLog();
-                    this.editingLogId = id;
-                    this.tempPunches = {
-                        in: this.getTimeInputVal(this.punchLogs[this.currentDate]?.[id]?.in),
-                        out: this.getTimeInputVal(this.punchLogs[this.currentDate]?.[id]?.out)
-                    };
-                }
-            },
-
-            startEdit(m) { this.isEditing = true; this.newMember = JSON.parse(JSON.stringify(m)); this.isAddingMember = true; },
-            resetMemberForm() { this.isAddingMember = false; this.isEditing = false; this.newMember = { empId: '', firstName: '', lastName: '', dept: 'General', role: 'Staff', shift: 'General Shift', allowedPL: 0, allowedSL: 0, allowedPerm: 0, doj: '', doe: '', dob: '', pin: '' }; },
-            
-            handleIdEntry() { 
-                const found = this.members.find(m => m.empId.trim().toUpperCase() === this.loginIdInput.trim().toUpperCase()); 
-                if (found) { 
-                    this.tempUser = JSON.parse(JSON.stringify(found)); 
-                    this.loginStep = !found.pin ? 'setup' : 'pin'; 
-                    setTimeout(() => {
-                        const inputId = this.loginStep === 'pin' ? 'login-pin-input' : 'setup-pin-input';
-                        const el = document.getElementById(inputId);
-                        if (el) el.focus();
-                    }, 50);
-                } else { 
-                    this.showNote("Invalid ID", "error"); 
-                } 
-            },
-            
-            handlePinVerification() { 
-                const uid = this.tempUser.id;
-                if (this.userLockoutUntil[uid] && Date.now() < this.userLockoutUntil[uid]) {
-                    const sec = Math.ceil((this.userLockoutUntil[uid] - Date.now()) / 1000);
-                    this.loginPinInput = '';
-                    return this.showNote(`Account locked. Try again in ${sec}s`, "error");
-                }
-
-                if (this.loginPinInput === this.tempUser.pin) { 
-                    this.userFailedAttempts[uid] = 0;
-                    this.userSession = JSON.parse(JSON.stringify(this.tempUser)); 
-                    const activeDate = this.getActiveShiftDate(); 
-                    const uId = this.userSession.id;
+        handlePinSetup() { 
+            if (this.loginPinInput.length === 6) { 
+                const idx = this.members.findIndex(m => m.id === this.tempUser.id); 
+                if (idx !== -1) { 
+                    this.members[idx].pin = this.loginPinInput; 
+                    this.upsertMemberCloud(this.members[idx]); // Targeted Save
+                    
+                    this.userSession = JSON.parse(JSON.stringify(this.members[idx])); 
+                    const activeDate = this.getActiveShiftDate(), uId = this.userSession.id;
                     if (!this.attendanceData[activeDate]) this.attendanceData[activeDate] = {}; 
-                    if (!this.attendanceData[activeDate][uId]) this.attendanceData[activeDate][uId] = 'p'; 
+                    this.attendanceData[activeDate][uId] = 'p'; 
+                    this.upsertAttCloud(activeDate, uId, 'p'); // Targeted Save
+
                     if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
                     if (!this.punchLogs[activeDate][uId] || !this.punchLogs[activeDate][uId].in) {
-                        this.punchLogs[activeDate][uId] = { in: this.getCurrentTimeIST(), out: '', breaks:[] };
+                        this.punchLogs[activeDate][uId] = { in: this.getCurrentTimeIST(), out: '', breaks:[], captchas: [] };
+                        this.upsertPunchCloud(activeDate, uId); // Targeted Save
                     }
-                    this.attendanceData = { ...this.attendanceData }; 
-                    this.punchLogs = { ...this.punchLogs };
-                    this.saveToLocal(true); 
+                    this.attendanceData = { ...this.attendanceData }; this.punchLogs = { ...this.punchLogs };
                     this.loginStep = 'id'; this.loginIdInput = ''; this.loginPinInput = ''; this.tempUser = null; 
-                    
-                    setTimeout(() => { 
-                        if (this.userOnBreak) {
-                            const el = document.getElementById('break-pin-input'); 
-                            if(el) el.focus(); 
-                        }
-                    }, 100);
-                } else { 
-                    this.userFailedAttempts[uid] = (this.userFailedAttempts[uid] || 0) + 1;
-                    this.loginPinInput = '';
-                    if (this.userFailedAttempts[uid] >= 3) {
-                        this.userLockoutUntil[uid] = Date.now() + 30000;
-                        this.userFailedAttempts[uid] = 0;
-                        this.showNote("Too many failed attempts. Locked for 30s.", "error");
-                    } else {
-                        this.showNote(`Invalid PIN (${3 - this.userFailedAttempts[uid]} attempts left)`, "error"); 
-                    }
+                    this.scheduleNextCaptcha(); this.showNote("Security Registered", "success"); 
                 } 
-            },
+            } else this.showNote("PIN must be 6 digits", "error"); 
+        },
 
-            handlePinSetup() { 
-                if (this.loginPinInput.length === 6) { 
-                    const idx = this.members.findIndex(m => m.id === this.tempUser.id); 
-                    if (idx !== -1) { 
-                        this.members[idx].pin = this.loginPinInput; 
-                        this.userSession = JSON.parse(JSON.stringify(this.members[idx])); 
-                        const activeDate = this.getActiveShiftDate(); 
-                        const uId = this.userSession.id;
-                        if (!this.attendanceData[activeDate]) this.attendanceData[activeDate] = {}; 
-                        this.attendanceData[activeDate][uId] = 'p'; 
-                        if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
-                        if (!this.punchLogs[activeDate][uId] || !this.punchLogs[activeDate][uId].in) {
-                            this.punchLogs[activeDate][uId] = { in: this.getCurrentTimeIST(), out: '', breaks:[] };
-                        }
-                        this.attendanceData = { ...this.attendanceData }; 
-                        this.punchLogs = { ...this.punchLogs };
-                        this.saveToLocal(true); 
-                        this.loginStep = 'id'; this.loginIdInput = ''; this.loginPinInput = ''; this.tempUser = null; 
-                        this.showNote("Security Registered", "success"); 
-                    } 
-                } else { this.showNote("PIN must be 6 digits", "error"); } 
-            },
+        logoutUser() { this.clearCaptchaTimers(); this.userSession = null; this.loginStep = 'id'; setTimeout(() => document.getElementById('login-id-input')?.focus(), 50); },
+        cancelLogin() { this.loginStep = 'id'; this.tempUser = null; this.loginIdInput = ''; this.loginPinInput = ''; setTimeout(() => document.getElementById('login-id-input')?.focus(), 50); },
 
-            logoutUser() { 
-                this.userSession = null; 
-                this.loginStep = 'id'; 
-                setTimeout(() => { const el = document.getElementById('login-id-input'); if (el) el.focus(); }, 50);
-            },
-            cancelLogin() { 
-                this.loginStep = 'id'; 
-                this.tempUser = null; 
-                this.loginIdInput = ''; 
-                this.loginPinInput = ''; 
-                setTimeout(() => { const el = document.getElementById('login-id-input'); if (el) el.focus(); }, 50);
-            },
+        verifyAdmin() { 
+            if (Date.now() < this.adminLockoutUntil) { this.adminPinInput = ''; return this.showNote(`Vault locked.`, "error"); }
+            if (this.adminPinInput === this.masterPin) { this.isAdminAuthenticated = true; this.adminPinInput = ''; this.adminFailedAttempts = 0; this.resetIdleTimer(); } 
+            else { 
+                this.adminFailedAttempts++; this.adminPinInput = '';
+                if (this.adminFailedAttempts >= 3) { this.adminLockoutUntil = Date.now() + 30000; this.adminFailedAttempts = 0; this.showNote("Vault Lockdown Triggered", "error"); } 
+                else this.showNote(`Access Denied`, "error"); 
+            } 
+        },
+        logoutAdmin() { this.isAdminAuthenticated = false; this.view = 'portal'; if(this.idleTimer) clearTimeout(this.idleTimer); },
+        
+        changeAdminPin() {
+            if (this.newPinValue.length === 6) { 
+                this.masterPin = this.newPinValue; 
+                this.upsertConfigCloud('master_pin', this.masterPin); // Targeted Save
+                this.newPinValue = ''; this.showNote("Master PIN Updated", "success"); 
+            } else this.showNote("PIN must be 6 digits", "error");
+        },
 
-            verifyAdmin() { 
-                if (Date.now() < this.adminLockoutUntil) {
-                    const sec = Math.ceil((this.adminLockoutUntil - Date.now()) / 1000);
-                    this.adminPinInput = '';
-                    return this.showNote(`Vault locked. Try again in ${sec}s`, "error");
-                }
-
-                if (this.adminPinInput === this.masterPin) { 
-                    this.isAdminAuthenticated = true; 
-                    this.adminPinInput = ''; 
-                    this.adminFailedAttempts = 0;
-                    this.resetIdleTimer(); 
-                } else { 
-                    this.adminFailedAttempts++;
-                    this.adminPinInput = '';
-                    if (this.adminFailedAttempts >= 3) {
-                        this.adminLockoutUntil = Date.now() + 30000;
-                        this.adminFailedAttempts = 0;
-                        this.showNote("Vault Lockdown Triggered (30s)", "error");
-                    } else {
-                        this.showNote(`Access Denied (${3 - this.adminFailedAttempts} attempts left)`, "error"); 
-                    }
-                } 
-            },
-
-            logoutAdmin() { this.isAdminAuthenticated = false; this.view = 'portal'; if(this.idleTimer) clearTimeout(this.idleTimer); },
+        addMember() {
+            if (!this.newMember.firstName || !this.newMember.empId) return this.showNote("Fields missing", "error");
+            const fullName = (this.newMember.firstName + ' ' + (this.newMember.lastName || '')).trim();
+            const cleanMember = { ...this.newMember, id: this.newMember.empId, name: fullName, allowedPL: Number(this.newMember.allowedPL ?? 0), allowedSL: Number(this.newMember.allowedSL ?? 0), allowedPerm: Number(this.newMember.allowedPerm ?? 0) };
             
-            changeAdminPin() {
-                if (this.newPinValue.length === 6) {
-                    this.masterPin = this.newPinValue;
-                    this.newPinValue = '';
-                    this.markConfigUpdated();
-                    this.saveToLocal(true);
-                    this.showNote("Master PIN Updated Successfully", "success");
-                } else {
-                    this.showNote("Master PIN must be exactly 6 characters", "error");
-                }
-            },
+            if (this.isEditing) { const idx = this.members.findIndex(m => m.empId === cleanMember.empId); if (idx !== -1) this.members[idx] = cleanMember; }
+            else { if (this.members.find(m => m.empId === cleanMember.empId)) return this.showNote("ID exists", "error"); this.members.push(cleanMember); }
+            
+            this.members = [...this.members]; 
+            this.upsertMemberCloud(cleanMember); // Targeted Save
+            this.processAutoHolidays(); 
+            this.resetMemberForm();
+        },
+        
+        addRole() { if (this.newRoleName.trim() && !this.roles.includes(this.newRoleName.trim())) { this.roles = [...this.roles, this.newRoleName.trim()]; this.upsertConfigCloud('roles', this.roles); this.newRoleName = ''; this.showNote("Role added", "success"); } },
+        addDept() { if (this.newDeptName.trim() && !this.departments.includes(this.newDeptName.trim())) { this.departments = [...this.departments, this.newDeptName.trim()]; this.upsertConfigCloud('departments', this.departments); this.newDeptName = ''; this.showNote("Department added", "success"); } },
+        addShift() { if (this.newShift.name.trim() && !this.shifts.find(s => s.name === this.newShift.name.trim())) { this.shifts = [...this.shifts, { name: this.newShift.name.trim(), inTime: this.newShift.inTime || '09:00', outTime: this.newShift.outTime || '18:00' }]; this.upsertConfigCloud('shifts', this.shifts); this.newShift = { name: '', inTime: '', outTime: '' }; this.showNote("Shift added", "success"); } },
 
-            addMember() {
-                if (!this.newMember.firstName || !this.newMember.empId) return this.showNote("Fields missing", "error");
-                const fullName = (this.newMember.firstName + ' ' + (this.newMember.lastName || '')).trim();
-                const cleanDept = (this.newMember.dept && this.newMember.dept !== "undefined") ? this.newMember.dept : (this.departments[0] || "General");
-                const cleanRole = (this.newMember.role && this.newMember.role !== "undefined") ? this.newMember.role : (this.roles[0] || "Staff");
-                const cleanShift = (this.newMember.shift && this.newMember.shift !== "undefined") ? this.newMember.shift : (this.shifts.length > 0 ? this.shifts[0].name : "General Shift");
-                
-                const cleanMember = { ...this.newMember, id: this.newMember.empId, name: fullName, dept: cleanDept, role: cleanRole, shift: cleanShift, allowedPL: Number(this.newMember.allowedPL ?? 0), allowedSL: Number(this.newMember.allowedSL ?? 0), allowedPerm: Number(this.newMember.allowedPerm ?? 0), dob: this.newMember.dob || '' };
-                
-                if (this.isEditing) { const idx = this.members.findIndex(m => m.empId === cleanMember.empId); if (idx !== -1) { this.members[idx] = cleanMember; } }
-                else { if (this.members.find(m => m.empId === cleanMember.empId)) return this.showNote("ID exists", "error"); this.members.push(cleanMember); }
-                this.members = [...this.members]; 
-                this.processAutoHolidays(); 
-                this.markConfigUpdated();
-                this.saveToLocal(true); 
-                this.resetMemberForm();
-            },
-            
-            addRole() { 
-                if (this.newRoleName.trim() && !this.roles.includes(this.newRoleName.trim())) { 
-                    this.roles =[...this.roles, this.newRoleName.trim()]; 
-                    this.newRoleName = ''; 
-                    this.markConfigUpdated();
-                    this.saveToLocal(true); 
-                    this.showNote("Role added & synced", "success");
-                }
-            },
-            
-            addDept() { 
-                if (this.newDeptName.trim() && !this.departments.includes(this.newDeptName.trim())) { 
-                    this.departments =[...this.departments, this.newDeptName.trim()]; 
-                    this.newDeptName = ''; 
-                    this.markConfigUpdated();
-                    this.saveToLocal(true); 
-                    this.showNote("Department added & synced", "success");
-                }
-            },
-            
-            addShift() { 
-                if (this.newShift.name.trim() && !this.shifts.find(s => s.name === this.newShift.name.trim())) { 
-                    this.shifts =[...this.shifts, { name: this.newShift.name.trim(), inTime: this.newShift.inTime || '09:00', outTime: this.newShift.outTime || '18:00' }]; 
-                    this.newShift = { name: '', inTime: '', outTime: '' }; 
-                    this.markConfigUpdated();
-                    this.saveToLocal(true); 
-                    this.showNote("Shift added & synced", "success");
-                }
-            },
-
-            removeDept(dept) { this.departments = this.departments.filter(d => d !== dept); this.markConfigUpdated(); this.saveToLocal(true); },
-            removeRole(role) { this.roles = this.roles.filter(r => r !== role); this.markConfigUpdated(); this.saveToLocal(true); },
-            removeShift(shiftName) { this.shifts = this.shifts.filter(s => s.name !== shiftName); this.markConfigUpdated(); this.saveToLocal(true); },
-            
-            showNote(msg, type = 'success') { this.notification = { msg, type }; setTimeout(() => this.notification = null, 3000); },
-            confirmWipe(t) { this.deleteTarget = t; this.showDeleteModal = true; },
-            
-            async executeWipe() { 
-                if (this.deleteTarget === 'local') { 
-                    // Complete Wipe for pure cloud
-                    this.members =[];
-                    this.attendanceData = {};
-                    this.punchLogs = {};
-                    this.leaveRequests =[];
-                    this.holidayList =[];
-                    this.markConfigUpdated();
-                    this.markDataUpdated();
-                    await this.syncToCloud();
+        removeDept(dept) { this.departments = this.departments.filter(d => d !== dept); this.upsertConfigCloud('departments', this.departments); },
+        removeRole(role) { this.roles = this.roles.filter(r => r !== role); this.upsertConfigCloud('roles', this.roles); },
+        removeShift(s) { this.shifts = this.shifts.filter(x => x.name !== s); this.upsertConfigCloud('shifts', this.shifts); },
+        
+        showNote(msg, type = 'success') { this.notification = { msg, type }; setTimeout(() => this.notification = null, 3000); },
+        confirmWipe(t) { this.deleteTarget = t; this.showDeleteModal = true; },
+        
+        async executeWipe() { 
+            if (this.deleteTarget === 'local') { 
+                // Caution: Real Cloud Wipe for the tables
+                try {
+                    await this.supabase.from('members').delete().neq('id', '0');
+                    await this.supabase.from('attendance').delete().neq('date', '1970-01-01');
+                    await this.supabase.from('punch_logs').delete().neq('date', '1970-01-01');
+                    await this.supabase.from('leave_requests').delete().neq('id', '0');
+                    await this.supabase.from('holidays').delete().neq('id', '0');
                     window.location.reload(); 
-                } else if (this.deleteTarget === 'member') { 
-                    this.members = this.members.filter(m => m.id !== this.memberToDelete); 
-                    this.markConfigUpdated(); 
-                    this.saveToLocal(); 
-                } 
-                this.showDeleteModal = false; 
-            },
-            
-            exportToPDF() { 
-                const el = document.getElementById('summary-content');
-                const scrollArea = document.getElementById('audit-table-scroll');
-                if (scrollArea) scrollArea.classList.remove('max-h-[600px]', 'overflow-x-auto');
-                html2pdf().from(el).set({ 
-                    margin: 10, filename: `Audit_Report_${this.summaryStartDate}_to_${this.summaryEndDate}.pdf`, 
-                    image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 },
-                    jsPDF: { format: 'a3', orientation: 'landscape' } 
-                }).save().then(() => {
-                    if (scrollArea) scrollArea.classList.add('max-h-[600px]', 'overflow-x-auto');
-                    this.showNote("Full PDF Audit Downloaded", "success");
-                }); 
-            },
+                } catch(e) { console.error(e); }
+            } else if (this.deleteTarget === 'member') { 
+                this.members = this.members.filter(m => m.id !== this.memberToDelete); 
+                try { await this.supabase.from('members').delete().eq('id', this.memberToDelete); } catch(e){} // Targeted Delete
+            } 
+            this.showDeleteModal = false; 
+        },
+        
+        exportToPDF() { 
+            const el = document.getElementById('summary-content'), scrollArea = document.getElementById('audit-table-scroll');
+            if (scrollArea) scrollArea.classList.remove('max-h-[600px]', 'overflow-x-auto');
+            html2pdf().from(el).set({ margin: 10, filename: `Audit_${this.summaryStartDate}_to_${this.summaryEndDate}.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { format: 'a3', orientation: 'landscape' } }).save().then(() => {
+                if (scrollArea) scrollArea.classList.add('max-h-[600px]', 'overflow-x-auto'); this.showNote("PDF Downloaded", "success");
+            }); 
+        },
 
-            exportDetailedExcel() {
-                if (!this.summaryStartDate || !this.summaryEndDate) return this.showNote("Invalid date range", "error");
-                const sDate = new Date(this.summaryStartDate);
-                const eDate = new Date(this.summaryEndDate);
-                
-                const detailedRows =[];
-
-                this.filteredMembers.forEach(member => {
-                    for (let d = new Date(sDate); d <= eDate; d.setDate(d.getDate() + 1)) {
-                        const dateStr = getISTString(d);
-                        const statusId = this.attendanceData[dateStr]?.[member.id] || '-';
-                        const statusObj = this.statusOptions.find(s => s.id === statusId);
-                        const statusLabel = statusObj ? statusObj.label : 'Unrecorded';
-                        
-                        const punchLog = this.punchLogs[dateStr]?.[member.id] || { in: '', out: '', breaks:[] };
-                        const activeMins = this.getActiveMinsForLog(punchLog, dateStr);
-                        const breakMins = this.calculateTotalBreakMins(punchLog.breaks);
-
-                        let notes = '';
-                        if (statusId === 'fh') {
-                            const h = this.holidayList.find(hol => hol.date === dateStr && (hol.dept === 'All' || hol.dept === member.dept));
-                            if (h) notes = `Holiday: ${h.name}`;
-                        } else if (['a', 'h', '1p', '2p', 'lop'].includes(statusId)) {
-                            const leave = this.leaveRequests.find(l => l.empId === member.id && l.status === 'approved' && l.startDate <= dateStr && l.endDate >= dateStr);
-                            if (leave) notes = `Leave: ${leave.reason}`;
-                        }
-
-                        detailedRows.push({
-                            'Date': dateStr,
-                            'Emp ID': member.empId,
-                            'Name': member.name,
-                            'Department': member.dept,
-                            'Shift': member.shift,
-                            'Status': statusLabel,
-                            'Punch In': punchLog.in ? punchLog.in : '',
-                            'Punch Out': punchLog.out ? punchLog.out : '',
-                            'Total Active (Mins)': activeMins > 0 ? activeMins : 0,
-                            'Total Break (Mins)': breakMins > 0 ? breakMins : 0,
-                            'Notes': notes
-                        });
-                    }
-                });
-
-                if (detailedRows.length === 0) return this.showNote("No data available for selected period", "error");
-
-                const wb = XLSX.utils.book_new();
-                const ws = XLSX.utils.json_to_sheet(detailedRows);
-                
-                const colWidths =[
-                    {wch: 12}, {wch: 10}, {wch: 20}, {wch: 15}, 
-                    {wch: 15}, {wch: 12}, {wch: 10}, {wch: 10}, {wch: 18}, {wch: 18}, {wch: 30}
-                ];
-                ws['!cols'] = colWidths;
-
-                XLSX.utils.book_append_sheet(wb, ws, "Detailed_Logs");
-                XLSX.writeFile(wb, `Detailed_Audit_${this.summaryStartDate}_to_${this.summaryEndDate}.xlsx`);
-                this.showNote("Detailed Report Downloaded", "success");
-            },
-
-            executeFullSystemExport(isAuto = false) { 
-                const wb = XLSX.utils.book_new(); 
-                
-                const ws1 = XLSX.utils.json_to_sheet(this.members.map(m => ({ 
-                    ID: m.empId, Name: m.name, Dept: m.dept, Role: m.role, Shift: m.shift, 
-                    PL: m.allowedPL, SL: m.allowedSL, Perm: m.allowedPerm, DOJ: m.doj, DOB: m.dob || ''
-                }))); 
-                XLSX.utils.book_append_sheet(wb, ws1, "Personnel"); 
-                
-                const attendanceRows =[];
-                Object.keys(this.attendanceData).sort().forEach(date => {
-                    Object.keys(this.attendanceData[date]).forEach(empId => {
-                        if (!this.attendanceData[date][empId]) return;
-                        const member = this.members.find(m => m.id === empId);
-                        attendanceRows.push({ Date: date, EmpID: empId, Name: member ? member.name : 'Unknown', Status: this.attendanceData[date][empId].toUpperCase() });
-                    });
-                });
-                XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(attendanceRows), "Attendance_Log");
-                
-                const punchRows =[];
-                Object.keys(this.punchLogs).sort().forEach(date => {
-                    Object.keys(this.punchLogs[date]).forEach(empId => {
-                        const member = this.members.find(m => m.id === empId);
-                        const log = this.punchLogs[date][empId];
-                        const activeMins = this.getActiveMinsForLog(log, date);
-                        const breakMins = this.calculateTotalBreakMins(log.breaks);
-                        punchRows.push({ Date: date, EmpID: empId, Name: member ? member.name : 'Unknown', In: log.in || '', Out: log.out || '', ActiveMins: activeMins, BreakMins: breakMins });
-                    });
-                });
-                XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(punchRows), "Punch_Logs");
-
-                const leaveRows = this.leaveRequests.map(l => ({
-                    ID: l.id, EmpID: l.empId, Name: l.name, Type: l.type, Start: l.startDate, End: l.endDate, Reason: l.reason, Status: l.status
-                }));
-                XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(leaveRows), "Leave_Requests");
-
-                const holidayRows = this.holidayList.map(h => ({ Name: h.name, Date: h.date, Applicable_To: h.dept }));
-                XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(holidayRows), "Holidays");
-
-                const prefix = isAuto ? 'Auto_Export' : 'Full_System_Export';
-                XLSX.writeFile(wb, `Attendly_${prefix}_${getISTString()}.xlsx`); 
-                
-                if (!isAuto) {
-                    this.showNote("Full System Excel Generated", "success");
-                } else {
-                    this.showNote("Scheduled Auto-Export Completed", "success");
+        exportDetailedExcel() {
+            if (!this.summaryStartDate || !this.summaryEndDate) return this.showNote("Invalid date range", "error");
+            const sDate = new Date(this.summaryStartDate), eDate = new Date(this.summaryEndDate), detailedRows = [];
+            this.filteredMembers.forEach(m => {
+                for (let d = new Date(sDate); d <= eDate; d.setDate(d.getDate() + 1)) {
+                    const dateStr = getISTString(d), statusId = this.attendanceData[dateStr]?.[m.id] || '-';
+                    const punchLog = this.punchLogs[dateStr]?.[m.id] || { in: '', out: '', breaks:[], captchas:[] };
+                    let notes = '';
+                    if (statusId === 'fh') { const h = this.holidayList.find(hol => hol.date === dateStr && (hol.dept === 'All' || hol.dept === m.dept)); if (h) notes = `Holiday: ${h.name}`; } 
+                    else if (['a', 'h', '1p', '2p', 'lop'].includes(statusId)) { const leave = this.leaveRequests.find(l => l.empId === m.id && l.status === 'approved' && l.startDate <= dateStr && l.endDate >= dateStr); if (leave) notes = `Leave: ${leave.reason}`; }
+                    detailedRows.push({ 'Date': dateStr, 'Emp ID': m.empId, 'Name': m.name, 'Department': m.dept, 'Shift': m.shift, 'Status': this.statusOptions.find(s => s.id === statusId)?.label || 'Unrecorded', 'Punch In': punchLog.in || '', 'Punch Out': punchLog.out || '', 'Active (Mins)': this.getActiveMinsForLog(punchLog, dateStr), 'Break (Mins)': this.calculateTotalBreakMins(punchLog.breaks), 'Captcha Fails': punchLog.captchas?.filter(c => c.status !== 'Passed').length || 0, 'Notes': notes });
                 }
-            },
+            });
+            if (detailedRows.length === 0) return this.showNote("No data", "error");
+            const wb = XLSX.utils.book_new(), ws = XLSX.utils.json_to_sheet(detailedRows);
+            ws['!cols'] = [{wch: 12}, {wch: 10}, {wch: 20}, {wch: 15}, {wch: 15}, {wch: 12}, {wch: 10}, {wch: 10}, {wch: 18}, {wch: 18}, {wch: 15}, {wch: 30}];
+            XLSX.utils.book_append_sheet(wb, ws, "Detailed_Logs"); XLSX.writeFile(wb, `Detailed_Audit_${this.summaryStartDate}_to_${this.summaryEndDate}.xlsx`); this.showNote("Report Downloaded", "success");
+        },
 
-            toggleAutoExport() {
-                this.autoExportEnabled = !this.autoExportEnabled;
-                this.saveAutoExportSettings();
-                if (this.autoExportEnabled) {
-                    this.showNote("Auto-Export set for " + this.autoExportTime + " IST", "success");
-                } else {
-                    this.showNote("Auto-Export Disabled", "success");
-                }
-            },
+        executeFullSystemExport(isAuto = false) { 
+            const wb = XLSX.utils.book_new(); 
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(this.members.map(m => ({ ID: m.empId, Name: m.name, Dept: m.dept, Role: m.role, Shift: m.shift, PL: m.allowedPL, SL: m.allowedSL, Perm: m.allowedPerm, DOJ: m.doj, DOB: m.dob || '' }))), "Personnel"); 
+            const attendanceRows = []; Object.keys(this.attendanceData).sort().forEach(date => Object.keys(this.attendanceData[date]).forEach(empId => { if (this.attendanceData[date][empId]) attendanceRows.push({ Date: date, EmpID: empId, Name: this.members.find(m => m.id === empId)?.name || 'Unknown', Status: this.attendanceData[date][empId].toUpperCase() }); }));
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(attendanceRows), "Attendance_Log");
+            const punchRows = []; Object.keys(this.punchLogs).sort().forEach(date => Object.keys(this.punchLogs[date]).forEach(empId => { const log = this.punchLogs[date][empId]; punchRows.push({ Date: date, EmpID: empId, Name: this.members.find(m => m.id === empId)?.name || 'Unknown', In: log.in || '', Out: log.out || '', ActiveMins: this.getActiveMinsForLog(log, date), BreakMins: this.calculateTotalBreakMins(log.breaks) }); }));
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(punchRows), "Punch_Logs");
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(this.leaveRequests.map(l => ({ ID: l.id, EmpID: l.empId, Name: l.name, Type: l.type, Start: l.startDate, End: l.endDate, Reason: l.reason, Status: l.status }))), "Leave_Requests");
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(this.holidayList.map(h => ({ Name: h.name, Date: h.date, Applicable_To: h.dept }))), "Holidays");
+            XLSX.writeFile(wb, `Attendly_${isAuto ? 'Auto_Export' : 'Full_System_Export'}_${getISTString()}.xlsx`); 
+            this.showNote(isAuto ? "Auto-Export Completed" : "System Excel Generated", "success");
+        },
 
-            saveAutoExportSettings() {
-                // Modified to save to cloud payload instead of local storage
-                this.markConfigUpdated();
-                this.saveToLocal(true);
-            },
+        toggleAutoExport() {
+            this.autoExportEnabled = !this.autoExportEnabled;
+            this.upsertConfigCloud('export_settings', { autoExportEnabled: this.autoExportEnabled, autoExportTime: this.autoExportTime, lastAutoExportDate: this.lastAutoExportDate }); // Targeted Save
+            this.showNote(this.autoExportEnabled ? `Auto-Export set for ${this.autoExportTime} IST` : "Auto-Export Disabled", "success");
+        },
 
-            createSafeSnapshot() {
-                // Local emergency storage bypassed in pure cloud mode.
-                console.warn("Emergency snapshot bypassed (running in pure-cloud mode)");
-            },
+        importFromJson(event) {
+            const file = event.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const parsed = JSON.parse(e.target.result);
+                    // Minimal processing for now - to fully support imports, it'd map to the new UPSERT structure.
+                    this.showNote("Direct JSON imports are disabled in relational mode. Contact DB Admin.", "error");
+                } catch (err) { this.showNote("Error reading JSON file.", "error"); } finally { event.target.value = ''; }
+            }; reader.readAsText(file);
+        },
 
-            importFromJson(event) {
-                const file = event.target.files[0];
-                if (!file) return;
+        importFromExcel(event) {
+            // Similarly disabled for safety in relational transition.
+            this.showNote("Direct Excel restores are disabled in relational mode. Contact DB Admin.", "error");
+            event.target.value = '';
+        },
+        
+        exportBackupJSON() {
+            const payload = { members: this.members, attendanceData: this.attendanceData, punchLogs: this.punchLogs, roles: this.roles, departments: this.departments, holidayList: this.holidayList };
+            const dlAnchorElem = document.createElement('a'); dlAnchorElem.setAttribute("href", "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload))); dlAnchorElem.setAttribute("download", `Attendly_Backup_${getISTString()}.json`); dlAnchorElem.click();
+        },
 
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    try {
-                        const parsed = JSON.parse(e.target.result);
-                        
-                        this.createSafeSnapshot(); 
-
-                        if (parsed.members) this.members = parsed.members;
-                        if (parsed.attendanceData) this.attendanceData = parsed.attendanceData;
-                        if (parsed.punchLogs) this.punchLogs = parsed.punchLogs;
-                        if (parsed.roles) this.roles = parsed.roles;
-                        if (parsed.departments) this.departments = parsed.departments;
-                        if (parsed.holidayList) this.holidayList = parsed.holidayList;
-
-                        this.markConfigUpdated();
-                        this.markDataUpdated();
-                        this.saveToLocal(true);
-                        
-                        this.showNote("JSON Data Imported Successfully!", "success");
-                        
-                    } catch (err) {
-                        console.error(err);
-                        this.showNote("Error reading JSON file. Check format.", "error");
-                    } finally {
-                        event.target.value = '';
-                    }
-                };
-                reader.readAsText(file);
-            },
-
-            importFromExcel(event) {
-                const file = event.target.files[0];
-                if (!file) return;
-
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    try {
-                        const data = new Uint8Array(e.target.result);
-                        const workbook = XLSX.read(data, {type: 'array'});
-                        
-                        this.createSafeSnapshot(); 
-
-                        if (workbook.Sheets['Personnel']) {
-                            const personnelData = XLSX.utils.sheet_to_json(workbook.Sheets['Personnel']);
-                            personnelData.forEach(row => {
-                                if (row.ID && !this.members.find(m => m.empId === row.ID.toString())) {
-                                    this.members.push({
-                                        id: row.ID.toString(),
-                                        empId: row.ID.toString(),
-                                        name: row.Name,
-                                        firstName: row.Name.split(' ')[0],
-                                        lastName: row.Name.split(' ').slice(1).join(' '),
-                                        dept: row.Dept || 'General',
-                                        role: row.Role || 'Staff',
-                                        shift: row.Shift || 'General Shift',
-                                        allowedPL: row.PL || 0,
-                                        allowedSL: row.SL || 0,
-                                        allowedPerm: row.Perm || 0,
-                                        doj: row.DOJ || '',
-                                        pin: '' 
-                                    });
-                                }
-                            });
-                        }
-
-                        if (workbook.Sheets['Attendance_Log']) {
-                            const attData = XLSX.utils.sheet_to_json(workbook.Sheets['Attendance_Log']);
-                            attData.forEach(row => {
-                                if (!row.Date || !row.EmpID) return;
-                                const dateStr = row.Date;
-                                const empId = row.EmpID.toString();
-                                if (!this.attendanceData[dateStr]) this.attendanceData[dateStr] = {};
-                                this.attendanceData[dateStr][empId] = (row.Status || '').toLowerCase();
-                            });
-                        }
-
-                        if (workbook.Sheets['Punch_Logs']) {
-                            const punchData = XLSX.utils.sheet_to_json(workbook.Sheets['Punch_Logs']);
-                            punchData.forEach(row => {
-                                if (!row.Date || !row.EmpID) return;
-                                const dateStr = row.Date;
-                                const empId = row.EmpID.toString();
-                                
-                                if (!this.punchLogs[dateStr]) this.punchLogs[dateStr] = {};
-                                if (!this.punchLogs[dateStr][empId]) {
-                                    this.punchLogs[dateStr][empId] = { in: '', out: '', breaks:[] };
-                                }
-                                
-                                if (row.In) this.punchLogs[dateStr][empId].in = row.In;
-                                if (row.Out) this.punchLogs[dateStr][empId].out = row.Out;
-                            });
-                        }
-
-                        this.attendanceData = { ...this.attendanceData };
-                        this.punchLogs = { ...this.punchLogs };
-                        this.members = [...this.members];
-                        
-                        this.markConfigUpdated();
-                        this.markDataUpdated();
-                        this.saveToLocal(true);
-                        
-                        this.showNote("Excel Data Imported Successfully!", "success");
-                        
-                        event.target.value = '';
-                        
-                    } catch (err) {
-                        console.error(err);
-                        this.showNote("Error reading Excel file. Check format.", "error");
-                    }
-                };
-                reader.readAsArrayBuffer(file);
-            },
-            
-            exportBackupJSON() {
-                const payload = { members: this.members, attendanceData: this.attendanceData, punchLogs: this.punchLogs, roles: this.roles, departments: this.departments, holidayList: this.holidayList };
-                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(payload));
-                const dlAnchorElem = document.createElement('a');
-                dlAnchorElem.setAttribute("href", dataStr);
-                dlAnchorElem.setAttribute("download", `Attendly_Backup_${getISTString()}.json`);
-                dlAnchorElem.click();
-            },
-
-            openNewMemberForm() {
-                this.isAddingMember = true;
-                this.isEditing = false;
-                this.newMember = { empId: '', firstName: '', lastName: '', dept: 'General', role: 'Staff', shift: 'General Shift', allowedPL: 0, allowedSL: 0, allowedPerm: 0, doj: '', doe: '', dob: '', pin: '' };
-            },
-
-            removeMember(id) {
-                this.memberToDelete = id;
-                this.confirmWipe('member');
-            },
-
-            resetUserPin(id) {
-                const idx = this.members.findIndex(m => m.id === id);
-                if (idx !== -1) {
-                    this.members[idx].pin = '';
-                    this.markConfigUpdated();
-                    this.saveToLocal(true);
-                    this.showNote("User security reset");
-                }
+        openNewMemberForm() { this.isAddingMember = true; this.isEditing = false; this.newMember = { empId: '', firstName: '', lastName: '', dept: 'General', role: 'Staff', shift: 'General Shift', allowedPL: 0, allowedSL: 0, allowedPerm: 0, doj: '', doe: '', dob: '', pin: '', captchaEnabled: false }; },
+        removeMember(id) { this.memberToDelete = id; this.confirmWipe('member'); },
+        resetUserPin(id) {
+            const idx = this.members.findIndex(m => m.id === id);
+            if (idx !== -1) { 
+                this.members[idx].pin = ''; 
+                this.upsertMemberCloud(this.members[idx]); // Targeted Save
+                this.showNote("User security reset"); 
             }
-        };
-    }
+        }
+    };
+};
 </script>
-
     <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/collapse@3.x.x/dist/cdn.min.js"></script>
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -1827,7 +1236,29 @@ syncChannel
 </head>
 <body class="text-zinc-900 h-screen w-full flex flex-col overflow-hidden" x-data="attendanceApp()" x-init="init()" x-cloak>
 
-    <div x-show="userSession && userOnBreak" class="fixed inset-0 z-[9999] bg-[#0a192f] flex flex-col items-center justify-center text-white" x-transition x-cloak>
+    <!-- CAPTCHA VERIFICATION MODAL -->
+    <div x-show="showCaptchaModal" class="fixed inset-0 z-[6000] flex items-center justify-center p-6 bg-zinc-950/80 backdrop-blur-sm" x-transition x-cloak>
+        <div class="relative bg-white rounded-[2.5rem] w-full max-w-sm p-8 text-center shadow-2xl animate-in zoom-in-95">
+            <div class="w-16 h-16 bg-[#0f4c81] text-white rounded-[1.5rem] flex items-center justify-center mx-auto mb-6 shadow-lg border-2 border-white">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <h3 class="text-2xl font-black tracking-tighter uppercase mb-2 text-zinc-950">Verification Check</h3>
+            <p class="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-6">Enter the code below</p>
+            
+            <div class="bg-zinc-100 p-4 rounded-xl mb-6 select-none relative overflow-hidden flex items-center justify-center">
+                <!-- Distorted background effect for captcha -->
+                <div class="absolute inset-0 opacity-20 pointer-events-none" style="background-image: repeating-linear-gradient(45deg, #000 0, #000 2px, transparent 2px, transparent 8px);"></div>
+                <span class="text-5xl font-black tracking-[0.3em] pl-3 text-zinc-800 relative z-10 font-mono" x-text="captchaTargetNumber"></span>
+            </div>
+
+            <input type="text" x-model="captchaInput" @keyup.enter="submitCaptcha()" placeholder="Code" class="w-full px-6 py-4 bg-white border-2 border-zinc-200 rounded-xl text-center font-black text-2xl tracking-[0.2em] outline-none shadow-sm focus:border-[#f26522] mb-6 transition-colors" x-ref="captchaInputRef" x-init="$watch('showCaptchaModal', value => { if(value) setTimeout(() => $refs.captchaInputRef.focus(), 100) })">
+            
+            <button @click="submitCaptcha()" class="w-full py-4 bg-[#f26522] hover:bg-[#d9561c] text-white rounded-xl font-black text-sm uppercase shadow-lg active:scale-95 transition-transform">Verify Identity</button>
+        </div>
+    </div>
+
+    <!-- ON BREAK LOCK SCREEN -->
+    <div x-show="userSession && userOnBreak" class="fixed inset-0 z-[5000] bg-[#0a192f] flex flex-col items-center justify-center text-white" x-transition x-cloak>
         <div x-data="{ activeIcon: 1 }" 
              x-init="setInterval(() => { activeIcon = activeIcon === 7 ? 1 : activeIcon + 1 }, 3000)" 
              class="w-24 h-24 bg-[#f26522] text-white rounded-[2rem] mx-auto shadow-[0_0_60px_-15px_rgba(242,101,34,0.5)] mb-8 relative overflow-hidden flex items-center justify-center">
@@ -1917,7 +1348,6 @@ syncChannel
     <nav class="flex flex-col md:flex-row shrink-0 items-center justify-between px-4 md:px-10 py-3 md:py-5 bg-[#0f4c81] border-b border-[#0d406d] z-[2000] gap-4">
         <div class="flex items-center justify-between w-full md:w-auto">
             <div class="flex items-center gap-3 bg-white p-1.5 rounded-xl shadow-lg pr-4">
-                <!-- Replace 'logo.png' below with your actual hosted logo URL -->
                 <img src="logo.png" alt="RevCentric Solutions" class="h-8 md:h-10 object-contain" onerror="this.style.display='none';">
                 <h1 class="text-xl md:text-2xl font-black tracking-tighter text-[#f26522]">
   <span class="text-[#0f4c81]">Rev</span>Centric <span class="text-[#0f4c81]">Solutions</span>
@@ -2076,39 +1506,55 @@ syncChannel
 
                     <div class="flex flex-col xl:flex-row gap-6 w-full">
                         
-                        <div class="flex-1 bg-white p-6 rounded-[2rem] border border-zinc-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6 portal-card">
-                            <div>
-                                <h4 class="text-xl font-black uppercase tracking-tight text-zinc-950">Active Shift Record</h4>
-                                <div class="flex flex-wrap items-center gap-2 mt-2">
-                                    <span class="text-[9px] font-black text-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg uppercase tracking-widest border border-indigo-100 mr-1" x-text="formatDate(getActiveShiftDate())"></span>
-                                    <div class="px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-black uppercase border border-emerald-100">
-                                        IN: <span x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in || '--:--'"></span>
+                        <div class="flex-1 bg-white p-6 rounded-[2rem] border border-zinc-100 shadow-sm flex flex-col justify-between portal-card relative">
+                            <div class="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                                <div>
+                                    <h4 class="text-xl font-black uppercase tracking-tight text-zinc-950">Active Shift Record</h4>
+                                    <div class="flex flex-wrap items-center gap-2 mt-2">
+                                        <span class="text-[9px] font-black text-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg uppercase tracking-widest border border-indigo-100 mr-1" x-text="formatDate(getActiveShiftDate())"></span>
+                                        <div class="px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-black uppercase border border-emerald-100">
+                                            IN: <span x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in || '--:--'"></span>
+                                        </div>
+                                        <div class="px-3 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-black uppercase border border-rose-100">
+                                            OUT: <span x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out || '--:--'"></span>
+                                        </div>
+                                        <div class="px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-[10px] font-black uppercase border border-amber-100 flex items-center gap-1.5" x-show="calculateTotalBreakMins(punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks) > 0 || userOnBreak">
+                                            <span x-show="userOnBreak" class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                                            BREAK: <span x-text="formatBreakDisplay(calculateTotalBreakMins(punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks))"></span>
+                                        </div>
                                     </div>
-                                    <div class="px-3 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-black uppercase border border-rose-100">
-                                        OUT: <span x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out || '--:--'"></span>
-                                    </div>
-                                    <div class="px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-[10px] font-black uppercase border border-amber-100 flex items-center gap-1.5" x-show="calculateTotalBreakMins(punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks) > 0 || userOnBreak">
-                                        <span x-show="userOnBreak" class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                                        BREAK: <span x-text="formatBreakDisplay(calculateTotalBreakMins(punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks))"></span>
-                                    </div>
+                                </div>
+                                
+                                <!-- Unified Quick Actions Panel: Take Break -> Day Log Out -> Time-Off -->
+                                <div class="flex flex-wrap items-center gap-2 shrink-0 bg-zinc-50 p-2 rounded-2xl border border-zinc-100">
+                                    
+                                    <template x-if="!userOnBreak && punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in && !punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out">
+                                        <button @click="startBreak()" class="px-5 py-2.5 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border border-[#0f4c81]">Take Break</button>
+                                    </template>
+                                    
+                                    <template x-if="userOnBreak">
+                                        <button @click="endBreak()" class="px-5 py-2.5 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border border-[#0f4c81] animate-pulse">End Break</button>
+                                    </template>
+                                    
+                                    <button @click="initiateLogout()" class="px-5 py-2.5 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border border-[#0f4c81]">Day Log Out</button>
+                                    <button @click="showLeaveModal = true" class="px-5 py-2.5 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border border-[#0f4c81]">Time-Off</button>
                                 </div>
                             </div>
                             
-                            <!-- Unified Quick Actions Panel: Take Break -> Day Log Out -> Time-Off -->
-                            <div class="flex flex-wrap items-center gap-2 mt-4 md:mt-0 shrink-0 bg-zinc-50 p-2 rounded-2xl border border-zinc-100">
-                                
-                                <template x-if="!userOnBreak && punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in && !punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out">
-                                    <button @click="startBreak()" class="px-5 py-2.5 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border border-[#0f4c81]">Take Break</button>
-                                </template>
-                                
-                                <template x-if="userOnBreak">
-                                    <button @click="endBreak()" class="px-5 py-2.5 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border border-[#0f4c81] animate-pulse">End Break</button>
-                                </template>
-                                
-                                <button @click="initiateLogout()" class="px-5 py-2.5 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border border-[#0f4c81]">Day Log Out</button>
-
-                                <button @click="showLeaveModal = true" class="px-5 py-2.5 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border border-[#0f4c81]">Time-Off</button>
-
+                            <!-- Toggle Captcha Check Section inside Portal -->
+                            <div class="mt-6 pt-5 border-t border-zinc-100 flex items-center justify-between">
+                                <div class="flex items-center gap-4">
+                                    <div class="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-[0.8rem] flex items-center justify-center">
+                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                    </div>
+                                    <div>
+                                        <h5 class="text-sm font-black uppercase text-zinc-950">Active Verification</h5>
+                                        <p class="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">Random Captcha Check (20-35m)</p>
+                                    </div>
+                                </div>
+                                <div :class="userSession?.captchaEnabled ? 'bg-[#f26522]' : 'bg-zinc-200'" class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors shadow-inner opacity-80 cursor-not-allowed" title="Security settings are controlled by Administration">
+    <span :class="userSession?.captchaEnabled ? 'translate-x-6' : 'translate-x-1'" class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm"></span>
+</div>
                             </div>
                         </div>
 
@@ -2474,6 +1920,7 @@ syncChannel
                                                         <span x-text="m.empId"></span> <span class="mx-1 text-zinc-200">•</span>
                                                         <span x-text="(m.dept || 'General')"></span>
                                                     </p>
+                                                    <p x-show="m.captchaEnabled" class="text-[8px] font-black text-indigo-500 uppercase tracking-widest mt-1">Captcha Verification ON</p>
                                                 </div>
                                             </div>
 
@@ -2581,6 +2028,45 @@ syncChannel
 
                                             </div>
                                         </div>
+
+                                        <!-- CAPTCHA VERIFICATION TIMELINE -->
+                                        <div class="w-full pt-2" x-show="punchLogs[currentDate]?.[m.id]?.captchas && punchLogs[currentDate]?.[m.id]?.captchas.length > 0" x-data="{ showCaptchas: false }">
+                                            <div class="bg-indigo-50/40 rounded-[1.25rem] border border-indigo-200/50 w-full overflow-hidden flex flex-col relative transition-all duration-300">
+                                                
+                                                <div @click="showCaptchas = !showCaptchas" class="px-5 py-3 bg-indigo-100/50 hover:bg-indigo-200/50 transition-colors cursor-pointer border-b border-indigo-200/50 flex items-center justify-between select-none">
+                                                    <span class="text-[10px] font-black uppercase text-indigo-800 tracking-widest flex items-center gap-2">
+                                                        <span class="w-2 h-2 rounded-full bg-indigo-500 shadow-sm"></span>
+                                                        Captcha Verifications
+                                                        <svg :class="showCaptchas ? 'rotate-180' : ''" class="w-4 h-4 ml-1 transition-transform duration-300 text-indigo-600" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path></svg>
+                                                    </span>
+                                                    <div class="flex gap-2">
+                                                        <span class="text-[9px] font-black uppercase text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-lg border border-emerald-200" x-text="(punchLogs[currentDate]?.[m.id]?.captchas ||[]).filter(c => c.status === 'Passed').length + ' Pass'"></span>
+                                                        <span class="text-[9px] font-black uppercase text-rose-700 bg-rose-100 px-2 py-0.5 rounded-lg border border-rose-200" x-text="(punchLogs[currentDate]?.[m.id]?.captchas ||[]).filter(c => c.status !== 'Passed').length + ' Fail/Miss'"></span>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div x-show="showCaptchas" x-collapse class="border-t border-indigo-200/30">
+                                                    <div class="p-5 flex items-center gap-4 overflow-x-auto custom-scrollbar relative">
+                                                        <div class="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-0.5 bg-indigo-200/50 z-0"></div>
+                                                        
+                                                        <template x-for="(cap, cIdx) in punchLogs[currentDate]?.[m.id]?.captchas" :key="cIdx">
+                                                            <div class="relative z-10 flex flex-col bg-white border-2 rounded-[1rem] shadow-sm min-w-[140px] transition-transform hover:-translate-y-1 hover:shadow-lg"
+                                                                :class="cap.status === 'Passed' ? 'border-emerald-200' : 'border-rose-200'">
+                                                                <div class="px-4 py-2 border-b flex items-center justify-between rounded-t-[14px]"
+                                                                    :class="cap.status === 'Passed' ? 'border-emerald-100 bg-emerald-50/50' : 'border-rose-100 bg-rose-50/50'">
+                                                                    <span class="text-[9px] font-black uppercase tracking-widest" :class="cap.status === 'Passed' ? 'text-emerald-600' : 'text-rose-600'" x-text="'Check ' + (cIdx + 1)"></span>
+                                                                    <span class="text-[9px] font-black px-2 py-0.5 rounded-md" :class="cap.status === 'Passed' ? 'text-emerald-700 bg-emerald-100' : 'text-rose-700 bg-rose-100'" x-text="cap.status"></span>
+                                                                </div>
+                                                                <div class="px-4 py-3 flex items-center justify-center gap-3 text-xs font-bold text-zinc-700">
+                                                                    <span x-text="cap.time"></span>
+                                                                </div>
+                                                            </div>
+                                                        </template>
+                                                    </div>
+                                                </div>
+
+                                            </div>
+                                        </div>
                                         
                                     </div>
                                 </template>
@@ -2608,6 +2094,18 @@ syncChannel
                                     <div class="space-y-1.5"><label class="text-[9px] font-black uppercase text-zinc-400">Date of Birth</label><input type="date" x-model="newMember.dob" class="w-full px-5 py-3 bg-zinc-50 border border-zinc-200 rounded-xl font-bold outline-none text-sm"></div>
                                     <div class="space-y-1.5"><label class="text-[9px] font-black uppercase text-zinc-400">Joining Date</label><input type="date" x-model="newMember.doj" class="w-full px-5 py-3 bg-zinc-50 border border-zinc-200 rounded-xl font-bold outline-none text-sm"></div>
                                     <div class="space-y-1.5"><label class="text-[9px] font-black uppercase text-zinc-400">Exit Date</label><input type="date" x-model="newMember.doe" class="w-full px-5 py-3 bg-zinc-50 border border-zinc-200 rounded-xl font-bold outline-none text-sm"></div>
+                                    
+                                    <div class="space-y-1.5 col-span-1 md:col-span-2 lg:col-span-4 mt-2">
+                                        <label class="flex items-center gap-3 cursor-pointer group w-fit">
+                                            <div class="relative">
+                                                <input type="checkbox" x-model="newMember.captchaEnabled" class="sr-only">
+                                                <div class="block bg-zinc-200 w-10 h-6 rounded-full transition-colors group-hover:bg-zinc-300" :class="newMember.captchaEnabled ? '!bg-[#f26522]' : ''"></div>
+                                                <div class="dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform" :class="newMember.captchaEnabled ? 'transform translate-x-4' : ''"></div>
+                                            </div>
+                                            <span class="text-[10px] font-black uppercase text-zinc-600 tracking-widest group-hover:text-zinc-900 transition-colors">Require Captcha Verification Checks</span>
+                                        </label>
+                                    </div>
+
                                 </div>
                                 <div class="flex justify-end gap-3"><button @click="resetMemberForm()" class="px-6 py-2.5 bg-zinc-100 text-zinc-600 hover:bg-zinc-200 rounded-xl font-black text-xs uppercase tracking-widest transition-colors">Cancel</button><button @click="addMember()" class="px-8 py-2.5 bg-[#f26522] hover:bg-[#d9561c] text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-md active:scale-95 transition-all">Save</button></div>
                             </div>
@@ -2794,7 +2292,8 @@ syncChannel
                                                     <span :class="autoExportEnabled ? 'translate-x-5' : 'translate-x-1'" class="inline-block h-3 w-3 transform rounded-full bg-white transition-transform"></span>
                                                 </button>
                                             </div>
-                                            <div x-show="autoExportEnabled" class="flex items-center gap-3 pt-2 border-t border-indigo-100">
+                                            <div x-show="autoExportEnabled" class="
+flex items-center gap-3 pt-2 border-t border-indigo-100">
                                                 <input type="time" x-model="autoExportTime" @change="saveAutoExportSettings()" class="flex-1 px-4 py-2 bg-white border border-indigo-200 text-indigo-900 rounded-xl text-xs font-bold outline-none w-full">
                                                 <span class="text-[9px] font-black text-indigo-400 uppercase">Daily</span>
                                             </div>
