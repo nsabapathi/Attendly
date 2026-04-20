@@ -82,6 +82,11 @@ window.attendanceApp = () => {
         autoExportTime: '18:00',
         lastAutoExportDate: '',
 
+	// NEW: On-Demand Fetching Trackers
+        scopeStartStr: '',
+        fetchedOldDates: new Set(),
+
+
         // SUPABASE CREDENTIALS
         supabaseUrl: 'https://lpthzknjzmxwukwpvhii.supabase.co',
         supabaseKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxwdGh6a25qem14d3Vrd3B2aGlpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyMzczMDksImV4cCI6MjA5MDgxMzMwOX0.C3uuAVuw3kQWFYcwAFa37bTYbVGOC3DIAgqYpw2osbs',
@@ -91,6 +96,8 @@ window.attendanceApp = () => {
         members: [],
         attendanceData: {}, 
         punchLogs: {}, 
+	ytdStats: {}, // 👈 ADD THIS LINE
+	userExceptionHistory: [], // 👈 Add this new array
         leaveRequests: [], 
         roles: [],
         departments: [],
@@ -148,6 +155,18 @@ window.attendanceApp = () => {
         init() {
             this.userSession = null;
             this.supabase = supabase.createClient(this.supabaseUrl, this.supabaseKey);
+
+            // Calculate 20 days ago for the initial load
+            const todayRef = getISTDateObject();
+            const initScopeDate = new Date(todayRef.getFullYear(), todayRef.getMonth(), todayRef.getDate() - 20);
+            this.scopeStartStr = getISTString(initScopeDate);
+
+            // Watch the currentDate. If user selects a date older than our 20-day scope, fetch it.
+            this.$watch('currentDate', (newDate) => {
+                if (this.scopeStartStr && newDate < this.scopeStartStr && !this.fetchedOldDates.has(newDate)) {
+                    this.fetchHistoricalDate(newDate);
+                }
+            });
 
             setInterval(() => {
                 const now = new Date();
@@ -336,14 +355,11 @@ window.attendanceApp = () => {
                 const { data: hData } = await this.supabase.from('holidays').select('*');
                 if (hData) this.holidayList = hData;
 
-                // FIX 2: Scope data fetching to the last 60 days to prevent 100,000 record crash
-                const todayRef = getISTDateObject();
-                const scopeStartStr = getISTString(new Date(todayRef.getFullYear(), todayRef.getMonth() - 2, 1));
-
-                // 4. Fetch Attendance
+                
+                // 4. Fetch Attendance (Now uses the 20-day global scope)
                 const { data: aData } = await this.supabase.from('attendance')
                     .select('*')
-                    .gte('date', scopeStartStr);
+                    .gte('date', this.scopeStartStr);
                 
                 let newAtt = {};
                 if (aData) {
@@ -354,10 +370,24 @@ window.attendanceApp = () => {
                 }
                 this.attendanceData = newAtt;
 
+		// 4.5 👈 ADD THIS: Fetch YTD totals from the SQL View
+                const { data: vData } = await this.supabase.from('member_ytd_stats').select('*');
+                let newYtdStats = {};
+                if (vData) {
+                    vData.forEach(row => {
+                        newYtdStats[row.member_id] = {
+                            leaves: row.ytd_leaves || 0,
+                            compOffs: row.ytd_comp_off || 0,
+                            permHours: row.ytd_perm_hours_used || 0
+                        };
+                    });
+                }
+                this.ytdStats = newYtdStats;
+
                 // 5. Fetch Punches, Breaks, and Captchas
-                const { data: pData } = await this.supabase.from('punch_logs').select('*').gte('date', scopeStartStr);
-                const { data: bData } = await this.supabase.from('break_logs').select('*').gte('log_date', scopeStartStr);
-const { data: capData } = await this.supabase.from('captcha_logs').select('*').gte('log_date', scopeStartStr);                
+                const { data: pData } = await this.supabase.from('punch_logs').select('*').gte('date', this.scopeStartStr);
+                const { data: bData } = await this.supabase.from('break_logs').select('*').gte('log_date', this.scopeStartStr);
+                const { data: capData } = await this.supabase.from('captcha_logs').select('*').gte('log_date', this.scopeStartStr);               
                 let newPunch = {};
                 
                 // First, build the base punch objects
@@ -414,6 +444,65 @@ const { data: capData } = await this.supabase.from('captcha_logs').select('*').g
         async syncToCloud() {
             this.showNote("Syncing is now Realtime. No manual push required.", "success");
         },
+
+        // NEW ON-DEMAND FETCH METHOD
+        async fetchHistoricalDate(targetDate) {
+            this.isSyncing = true;
+            this.fetchedOldDates.add(targetDate); 
+            
+            try {
+                // 1. Pull Attendance
+                const { data: aData } = await this.supabase.from('attendance').select('*').eq('date', targetDate);
+                if (aData) {
+                    if (!this.attendanceData[targetDate]) this.attendanceData[targetDate] = {};
+                    aData.forEach(r => {
+                        this.attendanceData[targetDate][r.member_id] = r.status;
+                    });
+                }
+
+                // 2. Pull Punches, Breaks, Captchas
+                const { data: pData } = await this.supabase.from('punch_logs').select('*').eq('date', targetDate);
+                const { data: bData } = await this.supabase.from('break_logs').select('*').eq('log_date', targetDate);
+                const { data: capData } = await this.supabase.from('captcha_logs').select('*').eq('log_date', targetDate);
+                
+                if (!this.punchLogs[targetDate]) this.punchLogs[targetDate] = {};
+
+                if (pData) {
+                    pData.forEach(r => {
+                        this.punchLogs[targetDate][r.member_id] = { 
+                            in: r.in_time || '', out: r.out_time || '', breaks: [], captchas: [] 
+                        };
+                    });
+                }
+                
+                if (bData) {
+                    bData.forEach(b => {
+                        if (!this.punchLogs[targetDate][b.member_id]) this.punchLogs[targetDate][b.member_id] = { in: '', out: '', breaks: [], captchas: [] };
+                        this.punchLogs[targetDate][b.member_id].breaks.push({ start: b.start_time, end: b.end_time || '' });
+                    });
+                }
+
+                if (capData) {
+                    capData.forEach(c => {
+                        if (!this.punchLogs[targetDate][c.member_id]) this.punchLogs[targetDate][c.member_id] = { in: '', out: '', breaks: [], captchas: [] };
+                        this.punchLogs[targetDate][c.member_id].captchas.push({ time: c.check_time, status: c.status });
+                    });
+                }
+
+                // 3. Trigger Alpine Reactivity
+                this.attendanceData = { ...this.attendanceData };
+                this.punchLogs = { ...this.punchLogs };
+                
+                this.showNote(`Historical log loaded for ${this.formatDate(targetDate)}`, "success");
+            } catch(e) { 
+                console.error("Historical Pull Error:", e); 
+                this.fetchedOldDates.delete(targetDate); // Let them try again if it failed
+                this.showNote("Failed to load historical data", "error");
+            } finally { 
+                this.isSyncing = false; 
+            }
+        },
+
 
         // ==========================================
         //  🔄 CAPTCHA & APP LOGIC UPDATED
@@ -522,18 +611,7 @@ const { data: capData } = await this.supabase.from('captcha_logs').select('*').g
             const tomorrowStr = getISTString(istRef);
             return this.holidayList.filter(h => h.date === tomorrowStr && (h.dept === 'All' || h.dept === this.userSession?.dept));
         },
-        get exceptionLogs() {
-            if (!this.userSession) return [];
-            const id = this.userSession.id;
-            const logs = [];
-            Object.keys(this.attendanceData).sort((a,b)=>new Date(b)-new Date(a)).forEach(dk => {
-                const sId = this.attendanceData[dk][id];
-                if (['a','h','1p','2p','lop','co'].includes(sId)) {
-                    logs.push({ date: dk, label: this.formatDate(dk), status: this.statusOptions.find(s=>s.id===sId) });
-                }
-            });
-            return logs;
-        },
+        
         get todayEvents() {
             const curM = getISTDateObject().getMonth() + 1, curD = getISTDateObject().getDate();
             const events = [];
@@ -823,15 +901,27 @@ const { data: capData } = await this.supabase.from('captcha_logs').select('*').g
                 }
             });
 
+            // Grab the true YTD data from the database view
+            const dbYTD = this.ytdStats[id] || { leaves: 0, compOffs: 0, permHours: 0 };
+
             return {
                 ...stats,
                 isAnniversary: user.doj && user.doj.split('-')[1] == curM && user.doj.split('-')[2] == curD,
                 isBirthday: user.dob && user.dob.split('-')[1] == curM && user.dob.split('-')[2] == curD,
                 holidays: this.holidayList.filter(h => h.dept === 'All' || h.dept === user.dept),
                 metrics: {
-                    presentMTD: mtd.p, lvMTD: mtd.lv, plAllowed: user.allowedPL || 0, slAllowed: user.allowedSL || 0, coEarned: ytd.co,
-                    lvAvailYTD: ((user.allowedPL||0) + ytd.co + (user.allowedSL||0)) - ytd.lv,
-                    prmAvailYTD: ((user.allowedPerm||0) * curM) - ytd.prm, prmUsedYTD: ytd.prm, lopMTD: mtd.lop,
+                    presentMTD: mtd.p, 
+                    lvMTD: mtd.lv, 
+                    plAllowed: user.allowedPL || 0, 
+                    slAllowed: user.allowedSL || 0, 
+                    
+                    // UPDATED: Use the DB View for YTD calculations
+                    coEarned: dbYTD.compOffs,
+                    lvAvailYTD: ((user.allowedPL||0) + dbYTD.compOffs + (user.allowedSL||0)) - dbYTD.leaves,
+                    prmAvailYTD: ((user.allowedPerm||0) * curM) - dbYTD.permHours, 
+                    prmUsedYTD: dbYTD.permHours, 
+                    
+                    lopMTD: mtd.lop,
                     avgActiveMTD: mtd.daysPunched ? Math.floor(mtd.activeMins/mtd.daysPunched) : 0,
                     avgBreakMTD: mtd.daysPunched ? Math.floor(mtd.breakMins/mtd.daysPunched) : 0,
                     avgActiveYTD: ytd.daysPunched ? Math.floor(ytd.activeMins/ytd.daysPunched) : 0,
@@ -853,10 +943,6 @@ const { data: capData } = await this.supabase.from('captcha_logs').select('*').g
                     const s = this.attendanceData[dk]?.[m.id];
                     if (!s) return;
                     const [y, mm] = dk.split('-').map(Number);
-                    if (y === endY && dk <= eDate) {
-                        if (s === 'a') d.lvYTD += 1; if (s === 'h') d.lvYTD += 0.5;
-                        if (s === '1p') d.prmYTDUsed += 1; if (s === '2p') d.prmYTDUsed += 2;
-                    }
                     if (dk >= sDate && dk <= eDate) {
                         if (s === 'p') d.presentMTD += 1;
                         if (s === 'a') d.absentMTD += 1;
@@ -878,8 +964,16 @@ const { data: capData } = await this.supabase.from('captcha_logs').select('*').g
                     }
                 });
 
-                d.avgActiveMTD = mtd.days ? Math.floor(mtd.act/mtd.days) : 0; d.avgBreakMTD = mtd.days ? Math.floor(mtd.brk/mtd.days) : 0;
-                d.avgActiveYTD = ytd.days ? Math.floor(ytd.act/ytd.days) : 0; d.avgBreakYTD = ytd.days ? Math.floor(ytd.brk/ytd.days) : 0;
+                // UPDATED: Grab YTD totals directly from our SQL view state
+                const dbYTD = this.ytdStats[m.id] || { leaves: 0, compOffs: 0, permHours: 0 };
+                d.lvYTD = dbYTD.leaves;
+                d.prmYTDUsed = dbYTD.permHours;
+
+                d.avgActiveMTD = mtd.days ? Math.floor(mtd.act/mtd.days) : 0; 
+                d.avgBreakMTD = mtd.days ? Math.floor(mtd.brk/mtd.days) : 0;
+                d.avgActiveYTD = ytd.days ? Math.floor(ytd.act/ytd.days) : 0; 
+                d.avgBreakYTD = ytd.days ? Math.floor(ytd.brk/ytd.days) : 0;
+                
                 return { ...m, ...d };
             });
         },
@@ -1013,11 +1107,28 @@ const { data: capData } = await this.supabase.from('captcha_logs').select('*').g
             else this.showNote("Invalid ID", "error"); 
         },
         
-        handlePinVerification() { 
+        async handlePinVerification() { 
             const uid = this.tempUser.id;
             if (this.userLockoutUntil[uid] && Date.now() < this.userLockoutUntil[uid]) { this.loginPinInput = ''; return this.showNote(`Account locked. Try again later`, "error"); }
             if (this.loginPinInput === this.tempUser.pin) { 
                 this.userFailedAttempts[uid] = 0; this.userSession = JSON.parse(JSON.stringify(this.tempUser)); 
+
+                // 👇 NEW: Fetch Exceptions from the View
+                const { data: excData } = await this.supabase
+                    .from('member_exceptions_view')
+                    .select('date, status')
+                    .eq('member_id', this.userSession.id)
+                    .order('date', { ascending: false });
+
+                if (excData) {
+                    this.userExceptionHistory = excData.map(log => ({
+                        date: log.date,
+                        label: this.formatDate(log.date),
+                        status: this.statusOptions.find(s => s.id === log.status)
+                    }));
+                }
+                // 👆 END NEW FETCH
+
                 const activeDate = this.getActiveShiftDate(), uId = this.userSession.id;
                 if (!this.attendanceData[activeDate]) this.attendanceData[activeDate] = {}; 
                 if (!this.attendanceData[activeDate][uId]) {
@@ -1039,7 +1150,7 @@ const { data: capData } = await this.supabase.from('captcha_logs').select('*').g
             } 
         },
 
-        handlePinSetup() { 
+        async handlePinSetup() { 
             if (this.loginPinInput.length === 6) { 
                 const idx = this.members.findIndex(m => m.id === this.tempUser.id); 
                 if (idx !== -1) { 
@@ -1047,6 +1158,23 @@ const { data: capData } = await this.supabase.from('captcha_logs').select('*').g
                     this.upsertMemberCloud(this.members[idx]); // Targeted Save
                     
                     this.userSession = JSON.parse(JSON.stringify(this.members[idx])); 
+
+                    // 👇 NEW: Fetch Exceptions from the View
+                    const { data: excData } = await this.supabase
+                        .from('member_exceptions_view')
+                        .select('date, status')
+                        .eq('member_id', this.userSession.id)
+                        .order('date', { ascending: false });
+
+                    if (excData) {
+                        this.userExceptionHistory = excData.map(log => ({
+                            date: log.date,
+                            label: this.formatDate(log.date),
+                            status: this.statusOptions.find(s => s.id === log.status)
+                        }));
+                    }
+                    // 👆 END NEW FETCH
+
                     const activeDate = this.getActiveShiftDate(), uId = this.userSession.id;
                     if (!this.attendanceData[activeDate]) this.attendanceData[activeDate] = {}; 
                     this.attendanceData[activeDate][uId] = 'p'; 
@@ -1739,25 +1867,25 @@ const { data: capData } = await this.supabase.from('captcha_logs').select('*').g
                             <div class="bg-white rounded-[2rem] border border-zinc-100 shadow-sm overflow-hidden flex flex-col h-full">
                                 <div class="divide-y divide-zinc-50 flex-1 max-h-[320px] overflow-y-auto custom-scrollbar">
                                     
-                                    <template x-for="log in exceptionLogs" :key="log.date">
-                                        <div class="p-6 flex items-center justify-between hover:bg-zinc-50 transition-colors">
-                                            <div>
-                                                <h5 class="text-sm font-black uppercase text-zinc-950 tracking-tight" x-text="log.status.label"></h5>
-                                                <div class="flex items-center gap-2 mt-1">
-                                                    <span class="text-[10px] font-black text-zinc-500 uppercase tracking-widest" x-text="log.label"></span>
-                                                    <span class="text-zinc-300">•</span>
-                                                    <span class="text-[9px] font-bold text-zinc-400 uppercase tracking-widest" x-text="log.date"></span>
-                                                </div>
-                                            </div>
-                                            <span :class="log.status.bg + ' ' + log.status.color" class="px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-current shadow-sm" x-text="log.status.display"></span>
-                                        </div>
-                                    </template>
+                                    <template x-for="log in userExceptionHistory" :key="log.date">
+    <div class="p-6 flex items-center justify-between hover:bg-zinc-50 transition-colors">
+        <div>
+            <h5 class="text-sm font-black uppercase text-zinc-950 tracking-tight" x-text="log.status.label"></h5>
+            <div class="flex items-center gap-2 mt-1">
+                <span class="text-[10px] font-black text-zinc-500 uppercase tracking-widest" x-text="log.label"></span>
+                <span class="text-zinc-300">•</span>
+                <span class="text-[9px] font-bold text-zinc-400 uppercase tracking-widest" x-text="log.date"></span>
+            </div>
+        </div>
+        <span :class="log.status.bg + ' ' + log.status.color" class="px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-current shadow-sm" x-text="log.status.display"></span>
+    </div>
+</template>
 
-                                    <template x-if="exceptionLogs.length === 0">
-                                        <div class="p-12 text-center text-zinc-400 font-bold uppercase tracking-widest text-xs">
-                                            No absences, permissions, or exceptions found on record.
-                                        </div>
-                                    </template>
+<template x-if="userExceptionHistory.length === 0">
+    <div class="p-12 text-center text-zinc-400 font-bold uppercase tracking-widest text-xs">
+        No absences, permissions, or exceptions found on record.
+    </div>
+</template>
                                     
                                 </div>
                             </div>
@@ -2187,10 +2315,10 @@ const { data: capData } = await this.supabase.from('captcha_logs').select('*').g
                                                     <td class="px-4 py-6 text-center text-zinc-600 font-black border-b border-zinc-50 bg-zinc-50" x-text="data.lvYTD"></td>
                                                     <td class="px-4 py-6 text-center text-zinc-600 font-black border-b border-zinc-50 bg-zinc-50" x-text="data.prmYTDUsed + 'h'"></td>
                                                     
-                                                    <td class="px-4 py-6 text-center text-emerald-600 font-black border-b border-zinc-50 bg-emerald-50/20" x-text="formatHoursDecimal(data.avgActiveMTD)"></td>
-                                                    <td class="px-4 py-6 text-center text-amber-600 font-black border-b border-zinc-50 bg-amber-50/20" x-text="formatHoursDecimal(data.avgBreakMTD)"></td>
-                                                    <td class="px-4 py-6 text-center text-emerald-600 font-black border-b border-zinc-50 bg-emerald-50/20" x-text="formatHoursDecimal(data.avgActiveYTD)"></td>
-                                                    <td class="px-8 py-6 text-center pr-10 text-amber-600 font-black border-b border-zinc-50 bg-amber-50/20" x-text="formatHoursDecimal(data.avgBreakYTD)"></td>
+                                                    <td class="px-4 py-6 text-center text-emerald-600 font-black border-b border-zinc-50 bg-emerald-50/20" x-text="formatBreakDisplay(data.avgActiveMTD)"></td>
+<td class="px-4 py-6 text-center text-amber-600 font-black border-b border-zinc-50 bg-amber-50/20" x-text="formatBreakDisplay(data.avgBreakMTD)"></td>
+<td class="px-4 py-6 text-center text-emerald-600 font-black border-b border-zinc-50 bg-emerald-50/20" x-text="formatBreakDisplay(data.avgActiveYTD)"></td>
+<td class="px-8 py-6 text-center pr-10 text-amber-600 font-black border-b border-zinc-50 bg-amber-50/20" x-text="formatBreakDisplay(data.avgBreakYTD)"></td>
                                                 </tr>
                                             </template>
                                         </tbody>
