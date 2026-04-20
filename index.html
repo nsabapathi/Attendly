@@ -180,7 +180,7 @@ window.attendanceApp = () => {
             }, 1000);
             
             // Initial Fetch from DB
-            this.syncFromCloud(true).then(() => this.processAutoHolidays());          
+            this.syncInitialConfig();         
             ['mousemove', 'keydown', 'mousedown', 'touchstart'].forEach(evt => {
                 window.addEventListener(evt, () => this.resetIdleTimer());
             });
@@ -352,8 +352,8 @@ window.attendanceApp = () => {
             catch(e) { console.error("Holiday save error", e); }
         },
 
-        // --- CORE SYNC ---
-        async syncFromCloud(silent = false) {
+        // --- CORE SYNC (SPLIT FOR EGRESS OPTIMIZATION) ---
+        async syncInitialConfig() {
             this.isSyncing = true;
             try {
                 // 1. Fetch Config
@@ -373,7 +373,7 @@ window.attendanceApp = () => {
                 }
 
                 // 2. Fetch Members
-                const { data: mData } = await this.supabase.from('members').select('*');
+                const { data: mData } = await this.supabase.from('members').select('id, emp_id, first_name, last_name, dept, role, shift, pin, captcha_enabled, doj, dob, allowed_pl, allowed_sl, allowed_perm');
                 if (mData) {
                     this.members = mData.map(m => ({
                         id: m.id, empId: m.emp_id, firstName: m.first_name, lastName: m.last_name,
@@ -383,8 +383,19 @@ window.attendanceApp = () => {
                         allowedPerm: m.allowed_perm, captchaEnabled: m.captcha_enabled
                     }));
                 }
+                this.syncError = false;
+            } catch (e) {
+                console.error("Initial Config Pull Error:", e);
+                this.syncError = true;
+            } finally {
+                this.isSyncing = false;
+            }
+        },
 
-                // 3. Fetch Leaves & Holidays
+        async syncUserData(silent = false) {
+            this.isSyncing = true;
+            try {
+                // Fetch Leaves & Holidays
                 const { data: lData } = await this.supabase.from('leave_requests').select('*');
                 if (lData) {
                     this.leaveRequests = lData.map(l => ({
@@ -394,14 +405,43 @@ window.attendanceApp = () => {
                 }
 
                 const { data: hData } = await this.supabase.from('holidays').select('*');
-                if (hData) this.holidayList = hData;
+                if (hData) {
+                    this.holidayList = hData;
+                    this.processAutoHolidays(); // Check holidays here, not on startup
+                }
 
-                
-                // 4. Fetch Attendance (Now uses the 20-day global scope)
-                const { data: aData } = await this.supabase.from('attendance')
-                    .select('*')
-                    .gte('date', this.scopeStartStr);
-                
+                // Prepare Queries
+                let ytdQuery = this.supabase.from('member_ytd_stats').select('*');
+                let attQuery = this.supabase.from('attendance').select('*').gte('date', this.scopeStartStr);
+                let punchQuery = this.supabase.from('punch_logs').select('*').gte('date', this.scopeStartStr);
+                let breakQuery = this.supabase.from('break_logs').select('*').gte('log_date', this.scopeStartStr);
+                let capQuery = this.supabase.from('captcha_logs').select('*').gte('log_date', this.scopeStartStr);
+
+                // THE FIX: Filter down to just this user if they aren't a manager or admin
+                if (!this.isAdminAuthenticated && !this.isManagerOrLead) {
+                    const myId = this.userSession.id;
+                    ytdQuery = ytdQuery.eq('member_id', myId);
+                    attQuery = attQuery.eq('member_id', myId);
+                    punchQuery = punchQuery.eq('member_id', myId);
+                    breakQuery = breakQuery.eq('member_id', myId);
+                    capQuery = capQuery.eq('member_id', myId);
+                }
+
+                // Fire queries concurrently
+                const [ { data: vData }, { data: aData }, { data: pData }, { data: bData }, { data: capData } ] = await Promise.all([
+                    ytdQuery, attQuery, punchQuery, breakQuery, capQuery
+                ]);
+
+                // Map YTD Stats
+                let newYtdStats = {};
+                if (vData) {
+                    vData.forEach(row => {
+                        newYtdStats[row.member_id] = { leaves: row.ytd_leaves || 0, compOffs: row.ytd_comp_off || 0, permHours: row.ytd_perm_hours_used || 0 };
+                    });
+                }
+                this.ytdStats = newYtdStats;
+
+                // Map Attendance
                 let newAtt = {};
                 if (aData) {
                     aData.forEach(r => {
@@ -411,59 +451,28 @@ window.attendanceApp = () => {
                 }
                 this.attendanceData = newAtt;
 
-		// 4.5 👈 ADD THIS: Fetch YTD totals from the SQL View
-                const { data: vData } = await this.supabase.from('member_ytd_stats').select('*');
-                let newYtdStats = {};
-                if (vData) {
-                    vData.forEach(row => {
-                        newYtdStats[row.member_id] = {
-                            leaves: row.ytd_leaves || 0,
-                            compOffs: row.ytd_comp_off || 0,
-                            permHours: row.ytd_perm_hours_used || 0
-                        };
-                    });
-                }
-                this.ytdStats = newYtdStats;
-
-                // 5. Fetch Punches, Breaks, and Captchas
-                const { data: pData } = await this.supabase.from('punch_logs').select('*').gte('date', this.scopeStartStr);
-                const { data: bData } = await this.supabase.from('break_logs').select('*').gte('log_date', this.scopeStartStr);
-                const { data: capData } = await this.supabase.from('captcha_logs').select('*').gte('log_date', this.scopeStartStr);               
+                // Map Punches, Breaks, Captchas
                 let newPunch = {};
-                
-                // First, build the base punch objects
                 if (pData) {
                     pData.forEach(r => {
                         if(!newPunch[r.date]) newPunch[r.date] = {};
-                        newPunch[r.date][r.member_id] = {
-                            in: r.in_time || '', out: r.out_time || '',
-                            breaks: [], captchas: [] 
-                        };
+                        newPunch[r.date][r.member_id] = { in: r.in_time || '', out: r.out_time || '', breaks: [], captchas: [] };
                     });
                 }
-
-                // Next, merge the breaks into the correct day/user object
                 if (bData) {
                     bData.forEach(b => {
                         if (newPunch[b.log_date] && newPunch[b.log_date][b.member_id]) {
-                            newPunch[b.log_date][b.member_id].breaks.push({
-                                start: b.start_time, end: b.end_time || ''
-                            });
+                            newPunch[b.log_date][b.member_id].breaks.push({ start: b.start_time, end: b.end_time || '' });
                         }
                     });
                 }
-
-                // Finally, merge the captchas into the correct day/user object
                 if (capData) {
-    capData.forEach(c => {
+                    capData.forEach(c => {
                         if (newPunch[c.log_date] && newPunch[c.log_date][c.member_id]) {
-                            newPunch[c.log_date][c.member_id].captchas.push({
-                                time: c.check_time, status: c.status
-                            });
+                            newPunch[c.log_date][c.member_id].captchas.push({ time: c.check_time, status: c.status });
                         }
                     });
                 }
-
                 this.punchLogs = newPunch;
 
                 // Session validation check
@@ -1170,8 +1179,12 @@ window.attendanceApp = () => {
             const uid = this.tempUser.id;
             if (this.userLockoutUntil[uid] && Date.now() < this.userLockoutUntil[uid]) { this.loginPinInput = ''; return this.showNote(`Account locked. Try again later`, "error"); }
             if (this.loginPinInput === this.tempUser.pin) { 
-                this.userFailedAttempts[uid] = 0; this.userSession = JSON.parse(JSON.stringify(this.tempUser)); 
+                this.userFailedAttempts[uid] = 0; 
+                this.userSession = JSON.parse(JSON.stringify(this.tempUser)); 
 		this.setupUserRealtime();
+
+                // Trigger targeted fetch upon logging in
+                await this.syncUserData(true);
 
                 // 👇 NEW: Fetch Exceptions from the View
                 const { data: excData } = await this.supabase
@@ -1218,6 +1231,7 @@ window.attendanceApp = () => {
                     this.upsertMemberCloud(this.members[idx]); // Targeted Save
                     this.userSession = JSON.parse(JSON.stringify(this.members[idx])); 
 		    this.setupUserRealtime(); // 👇 ADD THIS LINE HERE	
+		    await this.syncUserData(true); // <--- ADD THIS MISSING LINE HERE  	
 
                     // 👇 NEW: Fetch Exceptions from the View
                     const { data: excData } = await this.supabase
@@ -1258,7 +1272,16 @@ window.attendanceApp = () => {
 
         verifyAdmin() { 
             if (Date.now() < this.adminLockoutUntil) { this.adminPinInput = ''; return this.showNote(`Vault locked.`, "error"); }
-            if (this.adminPinInput === this.masterPin) { this.isAdminAuthenticated = true; this.adminPinInput = ''; this.adminFailedAttempts = 0; this.resetIdleTimer();this.setupUserRealtime(); } 
+            if (this.adminPinInput === this.masterPin) { 
+                this.isAdminAuthenticated = true; 
+                this.adminPinInput = ''; 
+                this.adminFailedAttempts = 0; 
+                this.resetIdleTimer();
+                this.setupUserRealtime(); 
+                
+                // Fetch full admin dashboard data upon logging in
+                this.syncUserData(true);
+            } 
             else { 
                 this.adminFailedAttempts++; this.adminPinInput = '';
                 if (this.adminFailedAttempts >= 3) { this.adminLockoutUntil = Date.now() + 30000; this.adminFailedAttempts = 0; this.showNote("Vault Lockdown Triggered", "error"); } 
