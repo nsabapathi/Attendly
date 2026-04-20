@@ -39,7 +39,7 @@ window.attendanceApp = () => {
     const lastDayStr = getISTString(new Date(todayObj.getFullYear(), todayObj.getMonth() + 1, 0));
 
     return {
-        view: 'portal', 
+	view: 'portal', 
         dashboardPeriod: 'month',
         portalPeriod: 'month', 
         filterName: '', 
@@ -56,6 +56,7 @@ window.attendanceApp = () => {
         newPinValue: '',
 
         userSession: null,
+	userSyncChannel: null, // Holds the active user's realtime connection
         loginIdInput: '',
         loginPinInput: '',
         breakPinInput: '',
@@ -179,19 +180,7 @@ window.attendanceApp = () => {
             }, 1000);
             
             // Initial Fetch from DB
-            this.syncFromCloud(true).then(() => this.processAutoHolidays());
-
-            // FIX 1: Targeted Realtime Listener
-            const syncChannel = this.supabase.channel('global-schema-changes');
-            syncChannel
-                .on('postgres_changes', { event: '*', schema: 'public' }, (payload) => {
-                    this.handleRealtimePayload(payload);
-                })
-                .subscribe((status) => {
-                    if (status === 'SUBSCRIBED') console.log("🟢 Supabase Realtime Connected");
-                    else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') this.syncError = true;
-                });
-
+            this.syncFromCloud(true).then(() => this.processAutoHolidays());          
             ['mousemove', 'keydown', 'mousedown', 'touchstart'].forEach(evt => {
                 window.addEventListener(evt, () => this.resetIdleTimer());
             });
@@ -207,6 +196,36 @@ window.attendanceApp = () => {
                     }
                 }
             }, 30000);
+        },
+
+// 👇 ADD THIS ENTIRE NEW FUNCTION
+        setupUserRealtime() {
+            // 1. If there is already an old connection running, kill it first.
+            if (this.userSyncChannel) {
+                this.supabase.removeChannel(this.userSyncChannel);
+                this.userSyncChannel = null;
+            }
+
+            // 2. If nobody is logged in, do nothing.
+            if (!this.userSession && !this.isAdminAuthenticated) return;
+
+            // 3. If a Manager or Vault Admin logs in, they need to see everyone's data.
+            if (this.isManagerOrLead || this.isAdminAuthenticated) {
+                this.userSyncChannel = this.supabase.channel('admin-tracking')
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, p => this.handleRealtimePayload(p))
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'punch_logs' }, p => this.handleRealtimePayload(p))
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'break_logs' }, p => this.handleRealtimePayload(p))
+                    .subscribe();
+            } 
+            // 4. If a standard employee logs in, ONLY listen to their specific ID.
+            else {
+                const myId = this.userSession.id;
+                this.userSyncChannel = this.supabase.channel(`user-${myId}-tracking`)
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance', filter: `member_id=eq.${myId}` }, p => this.handleRealtimePayload(p))
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'punch_logs', filter: `member_id=eq.${myId}` }, p => this.handleRealtimePayload(p))
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'break_logs', filter: `member_id=eq.${myId}` }, p => this.handleRealtimePayload(p))
+                    .subscribe();
+            }
         },
 
         // FIX 1B: Targeted Realtime Handler Method
@@ -770,8 +789,22 @@ window.attendanceApp = () => {
 
         resetIdleTimer() {
             if (this.idleTimer) clearTimeout(this.idleTimer);
-            if (this.isAdminAuthenticated) {
-                this.idleTimer = setTimeout(() => { if(this.isAdminAuthenticated) { this.logoutAdmin(); this.showNote("Vault auto-locked", "error"); } }, this.idleTimeout);
+            
+            // Start the idle timer if an Admin OR a Standard User is logged in
+            if (this.isAdminAuthenticated || this.userSession) {
+                
+                // You can change 'this.idleTimeout' to something shorter for staff if you want, 
+                // like 60000 (1 minute). Currently it uses your default of 5 minutes.
+                this.idleTimer = setTimeout(() => { 
+                    if (this.isAdminAuthenticated) { 
+                        this.logoutAdmin(); 
+                        this.showNote("Vault auto-locked due to inactivity", "error"); 
+                    }
+                    if (this.userSession) {
+                        this.logoutUser(); // This triggers the connection kill-switch!
+                        this.showNote("Session expired due to inactivity", "error");
+                    }
+                }, this.idleTimeout); 
             }
         },
 
@@ -1138,6 +1171,7 @@ window.attendanceApp = () => {
             if (this.userLockoutUntil[uid] && Date.now() < this.userLockoutUntil[uid]) { this.loginPinInput = ''; return this.showNote(`Account locked. Try again later`, "error"); }
             if (this.loginPinInput === this.tempUser.pin) { 
                 this.userFailedAttempts[uid] = 0; this.userSession = JSON.parse(JSON.stringify(this.tempUser)); 
+		this.setupUserRealtime();
 
                 // 👇 NEW: Fetch Exceptions from the View
                 const { data: excData } = await this.supabase
@@ -1182,8 +1216,8 @@ window.attendanceApp = () => {
                 if (idx !== -1) { 
                     this.members[idx].pin = this.loginPinInput; 
                     this.upsertMemberCloud(this.members[idx]); // Targeted Save
-                    
                     this.userSession = JSON.parse(JSON.stringify(this.members[idx])); 
+		    this.setupUserRealtime(); // 👇 ADD THIS LINE HERE	
 
                     // 👇 NEW: Fetch Exceptions from the View
                     const { data: excData } = await this.supabase
@@ -1218,19 +1252,31 @@ window.attendanceApp = () => {
             } else this.showNote("PIN must be 6 digits", "error"); 
         },
 
-        logoutUser() { this.clearCaptchaTimers(); this.userSession = null; this.loginStep = 'id'; setTimeout(() => document.getElementById('login-id-input')?.focus(), 50); },
+        logoutUser() { this.clearCaptchaTimers(); this.userSession = null; if (this.userSyncChannel) {this.supabase.removeChannel(this.userSyncChannel);this.userSyncChannel = null;} this.loginStep = 'id'; setTimeout(() => document.getElementById('login-id-input')?.focus(), 50); },
+
         cancelLogin() { this.loginStep = 'id'; this.tempUser = null; this.loginIdInput = ''; this.loginPinInput = ''; setTimeout(() => document.getElementById('login-id-input')?.focus(), 50); },
 
         verifyAdmin() { 
             if (Date.now() < this.adminLockoutUntil) { this.adminPinInput = ''; return this.showNote(`Vault locked.`, "error"); }
-            if (this.adminPinInput === this.masterPin) { this.isAdminAuthenticated = true; this.adminPinInput = ''; this.adminFailedAttempts = 0; this.resetIdleTimer(); } 
+            if (this.adminPinInput === this.masterPin) { this.isAdminAuthenticated = true; this.adminPinInput = ''; this.adminFailedAttempts = 0; this.resetIdleTimer();this.setupUserRealtime(); } 
             else { 
                 this.adminFailedAttempts++; this.adminPinInput = '';
                 if (this.adminFailedAttempts >= 3) { this.adminLockoutUntil = Date.now() + 30000; this.adminFailedAttempts = 0; this.showNote("Vault Lockdown Triggered", "error"); } 
                 else this.showNote(`Access Denied`, "error"); 
             } 
         },
-        logoutAdmin() { this.isAdminAuthenticated = false; this.view = 'portal'; if(this.idleTimer) clearTimeout(this.idleTimer); },
+
+        logoutAdmin() { 
+            this.isAdminAuthenticated = false; 
+            this.view = 'portal'; 
+            if(this.idleTimer) clearTimeout(this.idleTimer); 
+
+            // 👇 ADD THIS CHUNK
+            if (this.userSyncChannel) {
+                this.supabase.removeChannel(this.userSyncChannel);
+                this.userSyncChannel = null;
+            }
+        },
         
         changeAdminPin() {
             if (this.newPinValue.length === 6) { 
