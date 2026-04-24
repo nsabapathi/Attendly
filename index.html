@@ -730,7 +730,11 @@ window.attendanceApp = () => {
             this.holidayList.forEach(h => {
                 this.members.forEach(m => {
                     if (h.dept === 'All' || h.dept === m.dept) {
-                        if (this.attendanceData[h.date]?.[m.id] !== 'fh') {
+                        
+                        // FIX: Only auto-fill 'FH' if the slot is currently blank.
+                        // This prevents overwriting manual admin changes like 'CO'.
+                        if (!this.attendanceData[h.date]?.[m.id]) { 
+                            
                             if(!this.attendanceData[h.date]) this.attendanceData[h.date] = {};
                             this.attendanceData[h.date][m.id] = 'fh';
                             
