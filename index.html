@@ -160,7 +160,7 @@ window.attendanceApp = () => {
 
             // Calculate 20 days ago for the initial load
             const todayRef = getISTDateObject();
-            const initScopeDate = new Date(todayRef.getFullYear(), todayRef.getMonth(), todayRef.getDate() - 20);
+            const initScopeDate = new Date(todayRef.getFullYear(), todayRef.getMonth(), todayRef.getDate() - 31);
             this.scopeStartStr = getISTString(initScopeDate);
 
             // Watch the currentDate. If user selects a date older than our 20-day scope, fetch it.
