@@ -97,7 +97,7 @@ window.attendanceApp = () => {
         punchLogs: {}, 
 	ytdStats: {}, 
 	userExceptionHistory:[], 
-        leaveRequests: [], 
+        leaveRequests:[], 
         roles:[],
         departments: [],
         shifts:[],
@@ -147,7 +147,7 @@ window.attendanceApp = () => {
             { id: 'dashboard', label: 'Stats', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>', admin: true },
             { id: 'record', label: 'Log', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>', admin: true },
             { id: 'members', label: 'Roster', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>', admin: true },
-            { id: 'summary', label: 'Audit', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>', admin: true },
+            { id: 'summary', label: 'Reports', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>', admin: true },
             { id: 'master', label: 'Master', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>', admin: true },
             { id: 'import', label: 'Hub', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>', admin: true }
         ],
@@ -584,11 +584,19 @@ window.attendanceApp = () => {
         },
 
         triggerCaptcha() {
-            this.captchaTargetNumber = Math.floor(100000 + Math.random() * 900000).toString();
+            // Generate a single-digit code (0-9)
+            this.captchaTargetNumber = Math.floor(Math.random() * 10).toString();
             this.captchaInput = '';
             this.showCaptchaModal = true;
+            
+            // Enhanced Push Notification (requires interaction and persists until closed)
             if ("Notification" in window && Notification.permission === "granted") {
-                new Notification("RevCentric Solutions", { body: "Verification Required", icon: "logo.png" });
+                new Notification("Verification Required", { 
+                    body: "Action needed immediately: Please verify your identity.", 
+                    icon: "logo.png",
+                    requireInteraction: true,
+                    vibrate: [200, 100, 200]
+                });
             }
             this.captchaTimeoutTimer = setTimeout(() => this.handleCaptchaTimeout(), 120000);
         },
@@ -597,20 +605,30 @@ window.attendanceApp = () => {
             if (!this.showCaptchaModal) return;
             this.clearCaptchaTimers();
             this.showCaptchaModal = false;
+            
             const passed = this.captchaInput === this.captchaTargetNumber;
             this.recordCaptchaResult(passed ? 'Passed' : 'Failed');
-            if (passed) this.showNote("Verified Successfully", "success");
-            else this.showNote("Verification Failed. Result logged.", "error");
-            this.scheduleNextCaptcha();
+            
+            if (passed) {
+                this.showNote("Verified Successfully", "success");
+                this.scheduleNextCaptcha();
+            } else {
+                // Auto-initiate break upon failure
+                this.showNote("Verification Failed. Auto-initiating break.", "error");
+                this.startBreak();
+            }
         },
 
         handleCaptchaTimeout() {
             if (!this.showCaptchaModal) return;
             this.showCaptchaModal = false;
             this.clearCaptchaTimers();
+            
             this.recordCaptchaResult('Missed');
-            this.showNote("Verification Missed", "error");
-            this.scheduleNextCaptcha();
+            
+            // Auto-initiate break upon missing the timeout window
+            this.showNote("Verification Missed. Auto-initiating break.", "error");
+            this.startBreak();
         },
 
         async recordCaptchaResult(status) {
@@ -919,7 +937,7 @@ window.attendanceApp = () => {
             Object.keys(this.attendanceData).forEach(dk => {
                 const s = this.attendanceData[dk][id];
                 if (!s) return;
-                const [dy, dm] = dk.split('-').map(Number);
+                const[dy, dm] = dk.split('-').map(Number);
                 if (dy === curY) {
                     if (s === 'co') ytd.co += 1;
                     if (s === 'a') ytd.lv += 1; if (s === 'h') ytd.lv += 0.5;
@@ -1329,9 +1347,90 @@ window.attendanceApp = () => {
         exportToPDF() { 
             const el = document.getElementById('summary-content'), scrollArea = document.getElementById('audit-table-scroll');
             if (scrollArea) scrollArea.classList.remove('max-h-[600px]', 'overflow-x-auto');
-            html2pdf().from(el).set({ margin: 10, filename: `Audit_${this.summaryStartDate}_to_${this.summaryEndDate}.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { format: 'a3', orientation: 'landscape' } }).save().then(() => {
+            html2pdf().from(el).set({ margin: 10, filename: `Audit_Report_${this.summaryStartDate}_to_${this.summaryEndDate}.pdf`, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { format: 'a3', orientation: 'landscape' } }).save().then(() => {
                 if (scrollArea) scrollArea.classList.add('max-h-[600px]', 'overflow-x-auto'); this.showNote("PDF Downloaded", "success");
             }); 
+        },
+async fetchReportDataRange() {
+            if (!this.summaryStartDate || !this.summaryEndDate) return this.showNote("Please select both dates", "error");
+            if (this.summaryStartDate > this.summaryEndDate) return this.showNote("Start date must be before end date", "error");
+
+            this.isSyncing = true;
+            this.showNote("Fetching historical report data...", "success");
+
+            try {
+                // Fetch bulk data for the exact range
+                let attQuery = this.supabase.from('attendance').select('*').gte('date', this.summaryStartDate).lte('date', this.summaryEndDate);
+                let punchQuery = this.supabase.from('punch_logs').select('*').gte('date', this.summaryStartDate).lte('date', this.summaryEndDate);
+                let breakQuery = this.supabase.from('break_logs').select('*').gte('log_date', this.summaryStartDate).lte('log_date', this.summaryEndDate);
+                let capQuery = this.supabase.from('captcha_logs').select('*').gte('log_date', this.summaryStartDate).lte('log_date', this.summaryEndDate);
+
+                const [{ data: aData }, { data: pData }, { data: bData }, { data: capData }] = await Promise.all([
+                    attQuery, punchQuery, breakQuery, capQuery
+                ]);
+
+                // Merge Attendance
+                if (aData) {
+                    aData.forEach(r => {
+                        if (!this.attendanceData[r.date]) this.attendanceData[r.date] = {};
+                        this.attendanceData[r.date][r.member_id] = r.status;
+                    });
+                    this.attendanceData = { ...this.attendanceData };
+                }
+
+                // Merge Punches
+                if (pData) {
+                    pData.forEach(r => {
+                        if (!this.punchLogs[r.date]) this.punchLogs[r.date] = {};
+                        if (!this.punchLogs[r.date][r.member_id]) {
+                            this.punchLogs[r.date][r.member_id] = { in: r.in_time || '', out: r.out_time || '', breaks: [], captchas: [] };
+                        } else {
+                            this.punchLogs[r.date][r.member_id].in = r.in_time || '';
+                            this.punchLogs[r.date][r.member_id].out = r.out_time || '';
+                        }
+                    });
+                }
+
+                // Merge Breaks
+                if (bData) {
+                    bData.forEach(b => {
+                        if (!this.punchLogs[b.log_date]) this.punchLogs[b.log_date] = {};
+                        if (!this.punchLogs[b.log_date][b.member_id]) this.punchLogs[b.log_date][b.member_id] = { in: '', out: '', breaks: [], captchas: [] };
+                        
+                        const breaks = this.punchLogs[b.log_date][b.member_id].breaks;
+                        if (!breaks.find(existing => existing.start === b.start_time)) {
+                            breaks.push({ start: b.start_time, end: b.end_time || '' });
+                        }
+                    });
+                }
+
+                // Merge Captchas
+                if (capData) {
+                    capData.forEach(c => {
+                        if (!this.punchLogs[c.log_date]) this.punchLogs[c.log_date] = {};
+                        if (!this.punchLogs[c.log_date][c.member_id]) this.punchLogs[c.log_date][c.member_id] = { in: '', out: '', breaks: [], captchas: [] };
+                        
+                        const captchas = this.punchLogs[c.log_date][c.member_id].captchas;
+                        if (!captchas.find(existing => existing.time === c.check_time)) {
+                            captchas.push({ time: c.check_time, status: c.status });
+                        }
+                    });
+                }
+
+                this.punchLogs = { ...this.punchLogs };
+                
+                // Adjust frontend memory scope if we fetched older data
+                if (this.summaryStartDate < this.scopeStartStr) {
+                    this.scopeStartStr = this.summaryStartDate;
+                }
+
+                this.showNote("Report data loaded successfully", "success");
+            } catch (e) {
+                console.error("Report Fetch Error:", e);
+                this.showNote("Failed to fetch report data", "error");
+            } finally {
+                this.isSyncing = false;
+            }
         },
 
         exportDetailedExcel() {
@@ -1350,20 +1449,114 @@ window.attendanceApp = () => {
             if (detailedRows.length === 0) return this.showNote("No data", "error");
             const wb = XLSX.utils.book_new(), ws = XLSX.utils.json_to_sheet(detailedRows);
             ws['!cols'] =[{wch: 12}, {wch: 10}, {wch: 20}, {wch: 15}, {wch: 15}, {wch: 12}, {wch: 10}, {wch: 10}, {wch: 18}, {wch: 18}, {wch: 15}, {wch: 30}];
-            XLSX.utils.book_append_sheet(wb, ws, "Detailed_Logs"); XLSX.writeFile(wb, `Detailed_Audit_${this.summaryStartDate}_to_${this.summaryEndDate}.xlsx`); this.showNote("Report Downloaded", "success");
+            XLSX.utils.book_append_sheet(wb, ws, "Detailed_Logs"); XLSX.writeFile(wb, `Detailed_Log_Report_${this.summaryStartDate}_to_${this.summaryEndDate}.xlsx`); this.showNote("Report Downloaded", "success");
+        },
+
+        exportRosterExcel() {
+            if (!this.members || this.members.length === 0) return this.showNote("No personnel data", "error");
+            const detailedRows = this.members.map(m => ({
+                'Emp ID': m.empId,
+                'Full Name': m.name,
+                'Department': m.dept,
+                'Role': m.role,
+                'Shift': m.shift,
+                'PL Allowed': m.allowedPL,
+                'SL Allowed': m.allowedSL,
+                'Perm (Hrs)': m.allowedPerm,
+                'Date of Joining': m.doj || '',
+                'Date of Birth': m.dob || '',
+                'Verification Required': m.captchaEnabled ? 'Yes' : 'No'
+            }));
+            const wb = XLSX.utils.book_new(), ws = XLSX.utils.json_to_sheet(detailedRows);
+            ws['!cols'] =[{wch: 12}, {wch: 25}, {wch: 18}, {wch: 18}, {wch: 18}, {wch: 12}, {wch: 12}, {wch: 12}, {wch: 15}, {wch: 15}, {wch: 20}];
+            XLSX.utils.book_append_sheet(wb, ws, "Roster_Report");
+            XLSX.writeFile(wb, `Roster_Report_${getISTString()}.xlsx`);
+            this.showNote("Roster Report Downloaded", "success");
         },
 
         executeFullSystemExport(isAuto = false) { 
+            if (!this.members || this.members.length === 0) return this.showNote("No data available to export", "error");
+
             const wb = XLSX.utils.book_new(); 
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(this.members.map(m => ({ ID: m.empId, Name: m.name, Dept: m.dept, Role: m.role, Shift: m.shift, PL: m.allowedPL, SL: m.allowedSL, Perm: m.allowedPerm, DOJ: m.doj, DOB: m.dob || '' }))), "Personnel"); 
-            const attendanceRows =[]; Object.keys(this.attendanceData).sort().forEach(date => Object.keys(this.attendanceData[date]).forEach(empId => { if (this.attendanceData[date][empId]) attendanceRows.push({ Date: date, EmpID: empId, Name: this.members.find(m => m.id === empId)?.name || 'Unknown', Status: this.attendanceData[date][empId].toUpperCase() }); }));
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(attendanceRows), "Attendance_Log");
-            const punchRows =[]; Object.keys(this.punchLogs).sort().forEach(date => Object.keys(this.punchLogs[date]).forEach(empId => { const log = this.punchLogs[date][empId]; punchRows.push({ Date: date, EmpID: empId, Name: this.members.find(m => m.id === empId)?.name || 'Unknown', In: log.in || '', Out: log.out || '', ActiveMins: this.getActiveMinsForLog(log, date), BreakMins: this.calculateTotalBreakMins(log.breaks) }); }));
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(punchRows), "Punch_Logs");
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(this.leaveRequests.map(l => ({ ID: l.id, EmpID: l.empId, Name: l.name, Type: l.type, Start: l.startDate, End: l.endDate, Reason: l.reason, Status: l.status }))), "Leave_Requests");
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(this.holidayList.map(h => ({ Name: h.name, Date: h.date, Applicable_To: h.dept }))), "Holidays");
-            XLSX.writeFile(wb, `Attendly_${isAuto ? 'Auto_Export' : 'Full_System_Export'}_${getISTString()}.xlsx`); 
-            this.showNote(isAuto ? "Auto-Export Completed" : "System Excel Generated", "success");
+
+            // SHEET 1: Personnel Master List
+            const personnelRows = this.members.map(m => ({ 
+                'Employee ID': m.empId, 
+                'Full Name': m.name, 
+                'Department': m.dept, 
+                'Role': m.role, 
+                'Shift Type': m.shift, 
+                'PL Allowance': m.allowedPL, 
+                'SL Allowance': m.allowedSL, 
+                'Perm (Hrs/Mo)': m.allowedPerm, 
+                'Date of Joining': m.doj, 
+                'Date of Birth': m.dob || 'N/A',
+                'Verification Enforced': m.captchaEnabled ? 'Yes' : 'No'
+            }));
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(personnelRows), "Personnel_Master"); 
+
+            // SHEET 2: Attendance Registry
+            const attendanceRows = []; 
+            Object.keys(this.attendanceData).sort().forEach(date => {
+                Object.keys(this.attendanceData[date]).forEach(empId => { 
+                    if (this.attendanceData[date][empId]) {
+                        attendanceRows.push({ 
+                            'Date': date, 
+                            'Emp ID': empId, 
+                            'Name': this.members.find(m => m.id === empId)?.name || 'Unknown', 
+                            'Status': this.attendanceData[date][empId].toUpperCase() 
+                        }); 
+                    }
+                }); 
+            });
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(attendanceRows), "Attendance_Registry");
+
+            // SHEET 3: Detailed Punch & Break Logs
+            const punchRows = []; 
+            Object.keys(this.punchLogs).sort().forEach(date => {
+                Object.keys(this.punchLogs[date]).forEach(empId => { 
+                    const log = this.punchLogs[date][empId]; 
+                    const captchaFails = (log.captchas || []).filter(c => c.status !== 'Passed').length;
+                    
+                    punchRows.push({ 
+                        'Date': date, 
+                        'Emp ID': empId, 
+                        'Name': this.members.find(m => m.id === empId)?.name || 'Unknown', 
+                        'Punch In': log.in || 'Missing', 
+                        'Punch Out': log.out || 'Missing', 
+                        'Active (Mins)': this.getActiveMinsForLog(log, date), 
+                        'Break (Mins)': this.calculateTotalBreakMins(log.breaks),
+                        'Failed Verifications': captchaFails
+                    }); 
+                }); 
+            });
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(punchRows), "Punch_and_Break_Logs");
+
+            // SHEET 4: Leave & Time-Off Requests
+            const leaveRows = this.leaveRequests.map(l => ({ 
+                'Request ID': l.id, 
+                'Emp ID': l.empId, 
+                'Name': l.name, 
+                'Leave Type': l.type.toUpperCase(), 
+                'Start Date': l.startDate, 
+                'End Date': l.endDate, 
+                'Reason': l.reason, 
+                'Approval Status': l.status.toUpperCase() 
+            }));
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(leaveRows), "Time_Off_Requests");
+
+            // SHEET 5: Holiday Configurations
+            const holidayRows = this.holidayList.map(h => ({ 
+                'Holiday Name': h.name, 
+                'Date': h.date, 
+                'Applicable Department': h.dept 
+            }));
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(holidayRows), "Holiday_Calendar");
+
+            // Generate and Download
+            const fileName = `RevCentric_System_Export_${isAuto ? 'Automated' : 'Manual'}_${getISTString()}.xlsx`;
+            XLSX.writeFile(wb, fileName); 
+            this.showNote(isAuto ? "Automated DB Export Completed" : "Comprehensive Export Downloaded", "success");
         },
 
         toggleAutoExport() {
@@ -1431,22 +1624,25 @@ window.attendanceApp = () => {
 </head>
 <body class="text-zinc-900 h-screen w-full flex flex-col overflow-hidden" x-data="attendanceApp()" x-init="init()" x-cloak>
 
-    <div x-show="showCaptchaModal" class="fixed inset-0 z-[6000] flex items-center justify-center p-6 bg-zinc-950/80 backdrop-blur-sm" x-transition x-cloak>
-        <div class="relative bg-white rounded-[2.5rem] w-full max-w-sm p-8 text-center shadow-2xl animate-in zoom-in-95">
-            <div class="w-16 h-16 bg-[#0f4c81] text-white rounded-[1.5rem] flex items-center justify-center mx-auto mb-6 shadow-lg border-2 border-white">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            </div>
-            <h3 class="text-2xl font-black tracking-tighter uppercase mb-2 text-zinc-950">Verification Check</h3>
-            <p class="text-xs font-bold text-zinc-500 uppercase tracking-widest mb-6">Enter the code below</p>
-            
-            <div class="bg-zinc-100 p-4 rounded-xl mb-6 select-none relative overflow-hidden flex items-center justify-center">
-                <div class="absolute inset-0 opacity-20 pointer-events-none" style="background-image: repeating-linear-gradient(45deg, #000 0, #000 2px, transparent 2px, transparent 8px);"></div>
-                <span class="text-5xl font-black tracking-[0.3em] pl-3 text-zinc-800 relative z-10 font-mono" x-text="captchaTargetNumber"></span>
-            </div>
+    <div x-show="showCaptchaModal" class="fixed inset-0 z-[6000] bg-zinc-950 flex flex-col items-center justify-center text-white" x-transition x-cloak>
+        <div class="w-24 h-24 bg-[#0f4c81] text-white rounded-[2rem] mx-auto shadow-[0_0_60px_-15px_rgba(15,76,129,0.5)] mb-8 relative overflow-hidden flex items-center justify-center animate-pulse">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <h3 class="text-4xl md:text-5xl font-black tracking-tighter uppercase mb-4 text-center px-4">Verification Check</h3>
+        <p class="text-[#f26522] font-black uppercase tracking-widest text-xs mb-10 text-center">Failure to verify will trigger tool lock</p>
 
-            <input type="text" x-model="captchaInput" @keyup.enter="submitCaptcha()" placeholder="Code" class="w-full px-6 py-4 bg-white border-2 border-zinc-200 rounded-xl text-center font-black text-2xl tracking-[0.2em] outline-none shadow-sm focus:border-[#f26522] mb-6 transition-colors" x-ref="captchaInputRef" x-init="$watch('showCaptchaModal', value => { if(value) setTimeout(() => $refs.captchaInputRef.focus(), 100) })">
+        <div class="w-full max-w-xl mx-auto space-y-6 px-6 text-center">
+            <div class="bg-zinc-900 border border-zinc-800 p-8 rounded-[2rem] mb-6 select-none relative overflow-hidden flex items-center justify-center">
+                <div class="absolute inset-0 opacity-10 pointer-events-none" style="background-image: repeating-linear-gradient(45deg, #fff 0, #fff 2px, transparent 2px, transparent 8px);"></div>
+                <span class="text-7xl font-black text-white relative z-10 font-mono" x-text="captchaTargetNumber"></span>
+            </div>
             
-            <button @click="submitCaptcha()" class="w-full py-4 bg-[#f26522] hover:bg-[#d9561c] text-white rounded-xl font-black text-sm uppercase shadow-lg active:scale-95 transition-transform">Verify Identity</button>
+            <div class="space-y-4">
+                <label class="text-[10px] font-black uppercase tracking-widest text-zinc-500 text-center block w-full">Enter Single Digit Code</label>
+                <input type="text" x-model="captchaInput" maxlength="1" @keyup.enter="submitCaptcha()" @input="if(captchaInput.length === 1) submitCaptcha()" class="w-full px-6 py-5 bg-zinc-900 border border-zinc-800 rounded-[1.5rem] text-center font-black text-4xl outline-none shadow-inner text-white focus:border-[#f26522] focus:ring-1 focus:ring-[#f26522] transition-all placeholder:text-zinc-800" x-ref="captchaInputRef" x-init="$watch('showCaptchaModal', value => { if(value) setTimeout(() => $refs.captchaInputRef.focus(), 100) })">
+            </div>
+            
+            <button @click="submitCaptcha()" class="w-full py-5 bg-[#f26522] text-white rounded-[1.5rem] font-black text-lg shadow-2xl transition-transform active:scale-95 hover:bg-[#d9561c]">Verify Identity</button>
         </div>
     </div>
 
@@ -1583,7 +1779,7 @@ window.attendanceApp = () => {
     <main class="flex-1 flex flex-col overflow-hidden relative">
         <header class="shrink-0 px-4 md:px-10 pt-4 md:pt-6 pb-4 flex flex-col gap-4 no-print z-[1000] relative">
             <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <h2 class="text-3xl md:text-5xl font-black text-zinc-950 tracking-tighter capitalize" x-text="view === 'master' ? 'Master Config' : (view === 'portal' ? 'Personnel' : view)"></h2>
+                <h2 class="text-3xl md:text-5xl font-black text-zinc-950 tracking-tighter capitalize" x-text="view === 'master' ? 'Master Config' : (view === 'portal' ? 'Personnel' : (view === 'summary' ? 'Reports' : view))"></h2>
                 <div class="flex flex-col sm:flex-row items-center gap-4 w-full lg:w-auto" x-show="view !== 'import' && view !== 'portal' && view !== 'master' && isAdminAuthenticated">
                     <select x-model="filterName" @change="handleNameFilterChange()" class="w-full sm:w-[280px] px-6 py-3 md:py-4 bg-white border border-zinc-200 rounded-[1.5rem] text-[13px] font-bold shadow-sm outline-none appearance-none cursor-pointer hover:bg-zinc-50 transition-colors">
                         <option value="">All Personnel</option>
@@ -2185,7 +2381,7 @@ window.attendanceApp = () => {
                                                     <span class="text-[10px] font-black uppercase text-amber-800 tracking-widest flex items-center gap-2">
                                                         <span class="w-2 h-2 rounded-full bg-amber-500 shadow-sm"></span>
                                                         Break Activity Timeline
-                                                        <svg :class="showBreaks ? 'rotate-180' : ''" class="w-4 h-4 ml-1 transition-transform duration-300 text-amber-600" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path></svg>
+                                                        <svg :class="showBreaks ? 'rotate-180' : ''" class="w-4 h-4 ml-1 transition-transform duration-300 text-amber-600" fillnone" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path></svg>
                                                     </span>
                                                     <span class="text-[10px] font-black uppercase text-amber-700 bg-white px-3 py-1 rounded-lg shadow-sm border border-amber-200" x-text="calculateTotalBreakMins(punchLogs[currentDate]?.[m.id]?.breaks) + ' Mins Total'"></span>
                                                 </div>
@@ -2327,18 +2523,24 @@ window.attendanceApp = () => {
                         <div x-show="view === 'summary'" class="space-y-6">
                             <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 no-print px-2">
                                 <div class="flex bg-white border border-zinc-200 p-1.5 rounded-2xl shadow-sm items-center gap-2 relative w-full md:w-auto">
-                                    <input type="date" x-model="summaryStartDate" class="bg-transparent px-3 py-2 font-black text-zinc-950 text-xs outline-none cursor-pointer hover:bg-zinc-50 rounded-xl transition-colors date-trigger w-full md:w-auto text-center">
+                                    <input type="date" x-model="summaryStartDate" class="bg-transparent px-3 py-2 font-black text-zinc-950 text-xs outline-none cursor-pointer hover:bg-zinc-50 rounded-xl transition-colors w-full md:w-auto text-center">
                                     <span class="text-zinc-300 font-bold text-xs uppercase tracking-widest">To</span>
-                                    <input type="date" x-model="summaryEndDate" class="bg-transparent px-3 py-2 font-black text-zinc-950 text-xs outline-none cursor-pointer hover:bg-zinc-50 rounded-xl transition-colors date-trigger w-full md:w-auto text-center">
+                                    <input type="date" x-model="summaryEndDate" class="bg-transparent px-3 py-2 font-black text-zinc-950 text-xs outline-none cursor-pointer hover:bg-zinc-50 rounded-xl transition-colors w-full md:w-auto text-center">
+                                    
+                                    <button @click="fetchReportDataRange()" class="bg-indigo-50 text-indigo-600 hover:bg-indigo-100 px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest transition-colors flex items-center gap-2 border border-indigo-100 ml-1">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" :class="isSyncing ? 'animate-spin' : ''"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>
+                                        <span class="hidden sm:inline">Load</span>
+                                    </button>
                                 </div>
                                 <div class="flex flex-wrap gap-2 w-full md:w-auto">
-                                    <button @click="exportToPDF()" class="flex-1 md:flex-none bg-[#f26522] hover:bg-[#d9561c] text-white px-6 py-3 rounded-xl font-black shadow-md text-[11px] hover:scale-105 transition-transform whitespace-nowrap">PDF Audit</button>
-                                    <button @click="exportDetailedExcel()" class="flex-1 md:flex-none bg-[#0f4c81] hover:bg-[#0a3861] text-white px-6 py-3 rounded-xl font-black shadow-md text-[11px] hover:scale-105 transition-transform border border-[#0a3861] whitespace-nowrap">Detailed Excel</button>
+                                    <button @click="exportToPDF()" class="flex-1 md:flex-none bg-[#f26522] hover:bg-[#d9561c] text-white px-4 py-3 rounded-xl font-black shadow-md text-[11px] hover:scale-105 transition-transform whitespace-nowrap">Audit Report (PDF)</button>
+                                    <button @click="exportDetailedExcel()" class="flex-1 md:flex-none bg-[#0f4c81] hover:bg-[#0a3861] text-white px-4 py-3 rounded-xl font-black shadow-md text-[11px] hover:scale-105 transition-transform border border-[#0a3861] whitespace-nowrap">Detailed Log Report</button>
+                                    <button @click="exportRosterExcel()" class="flex-1 md:flex-none bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded-xl font-black shadow-md text-[11px] hover:scale-105 transition-transform border border-emerald-700 whitespace-nowrap">Roster Report</button>
                                 </div>
                             </div>
                             <div id="summary-content" class="bg-white rounded-[2rem] border border-zinc-200 overflow-hidden shadow-sm">
                                 <div class="p-6 md:p-10 border-b border-zinc-100 flex justify-between items-end">
-                                    <div class="space-y-1"><h2 class="text-4xl md:text-5xl font-black tracking-tighter text-zinc-950 uppercase leading-none">Audit Matrix</h2><p class="text-zinc-400 font-bold uppercase tracking-[0.3em] text-[9px]"><span x-text="formatDate(summaryStartDate)"></span> TO <span x-text="formatDate(summaryEndDate)"></span> • IST Performance Index</p></div>
+                                    <div class="space-y-1"><h2 class="text-4xl md:text-5xl font-black tracking-tighter text-zinc-950 uppercase leading-none">Audit Report</h2><p class="text-zinc-400 font-bold uppercase tracking-[0.3em] text-[9px]"><span x-text="formatDate(summaryStartDate)"></span> TO <span x-text="formatDate(summaryEndDate)"></span> • IST Performance Index</p></div>
                                 </div>
                                 <div id="audit-table-scroll" class="overflow-x-auto min-w-full max-h-[600px] custom-scrollbar">
                                     <table class="w-full text-left border-separate border-spacing-0 relative min-w-[1400px]">
@@ -2441,86 +2643,54 @@ window.attendanceApp = () => {
                             </div>
                         </div>
 
-                        <div x-show="view === 'import'" class="space-y-8">
-                            <div class="bg-zinc-950 p-8 md:p-12 rounded-[3rem] shadow-2xl relative overflow-hidden text-white border-4 border-white/5">
-                                <div class="absolute -right-20 -bottom-20 w-96 h-96 bg-white/5 rounded-full blur-[100px]"></div>
-                                <div class="relative z-10 space-y-8 text-center lg:text-left">
-                                    <h4 class="text-3xl md:text-4xl font-black tracking-tighter leading-none uppercase flex flex-col md:flex-row items-center justify-center lg:justify-start gap-3">
-                                        Enterprise Vault
-                                        <span class="px-3 py-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full text-[10px] tracking-widest flex items-center gap-1 mt-2 md:mt-0">
-                                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                                            AES-256 ENCRYPTED
-                                        </span>
-                                    </h4>
-                                    <p class="text-zinc-500 font-bold max-w-md mx-auto lg:mx-0 text-sm leading-relaxed">Hard-linked organizational vault active. Global synchronization is locked to Indian Standard Time (Asia/Kolkata). Data is End-to-End Encrypted before leaving the browser.</p>
-                                    <div class="flex flex-wrap gap-4 justify-center lg:justify-start">
-                                        <button @click="syncFromCloud()" class="px-8 py-4 bg-[#f26522] hover:bg-[#d9561c] text-white rounded-2xl font-black text-sm shadow-xl active:scale-95 transition-transform w-full sm:w-auto">Sync Hub</button>
-                                        <button @click="syncToCloud()" class="px-8 py-4 bg-[#0f4c81] hover:bg-[#0a3861] border border-[#0f4c81] text-white rounded-2xl font-black text-sm transition-all w-full sm:w-auto">Manual Backup</button>
-                                    </div>
+                        <div x-show="view === 'import'" class="space-y-8 animate-in fade-in">
+                            <div class="bg-[#0f4c81] p-8 md:p-12 rounded-[3rem] shadow-xl text-white relative overflow-hidden">
+                                <div class="absolute -right-20 -top-20 w-64 h-64 bg-white/10 rounded-full blur-3xl"></div>
+                                <div class="relative z-10">
+                                    <h4 class="text-3xl md:text-4xl font-black tracking-tighter uppercase mb-2">Data & Security Hub</h4>
+                                    <p class="text-[#86b5e0] font-bold text-sm max-w-xl">Manage master credentials, configure automated IST reporting, and extract complete relational database snapshots.</p>
                                 </div>
                             </div>
-                            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                <div class="bg-white p-8 rounded-[2rem] border border-zinc-100 shadow-xl space-y-6 flex flex-col h-full">
-                                    <h5 class="text-xl font-black uppercase">Credentials</h5>
+
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div class="bg-white p-8 rounded-[2rem] border border-zinc-100 shadow-sm flex flex-col h-full">
+                                    <h5 class="text-xl font-black uppercase text-zinc-900 mb-2">Admin Security</h5>
+                                    <p class="text-xs font-bold text-zinc-500 mb-6">Update the master vault access PIN.</p>
                                     <div class="flex gap-2 mt-auto">
                                         <input type="password" x-model="newPinValue" placeholder="NEW PIN" maxlength="6" class="flex-1 px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl outline-none text-center font-black tracking-widest">
-                                        <button @click="changeAdminPin()" class="px-6 bg-[#f26522] hover:bg-[#d9561c] text-white rounded-xl font-black text-[10px] uppercase active:scale-95 shrink-0">Set</button>
+                                        <button @click="changeAdminPin()" class="px-6 bg-[#f26522] hover:bg-[#d9561c] text-white rounded-xl font-black text-[10px] uppercase active:scale-95 transition-transform shrink-0">Update</button>
                                     </div>
                                 </div>
-                                <div class="bg-white p-8 rounded-[2rem] border border-zinc-100 shadow-xl space-y-6 flex flex-col h-full">
-                                    <h5 class="text-xl font-black uppercase text-indigo-600">Export & Automations</h5>
+
+                                <div class="bg-white p-8 rounded-[2rem] border border-zinc-100 shadow-sm flex flex-col h-full">
+                                    <div class="flex items-start justify-between mb-2">
+                                        <h5 class="text-xl font-black uppercase text-indigo-600">Auto-Backups</h5>
+                                        <button @click="toggleAutoExport()" :class="autoExportEnabled ? 'bg-indigo-600' : 'bg-zinc-300'" class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none shrink-0 shadow-inner">
+                                            <span :class="autoExportEnabled ? 'translate-x-6' : 'translate-x-1'" class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm"></span>
+                                        </button>
+                                    </div>
+                                    <p class="text-xs font-bold text-zinc-500 mb-6">Schedule automated Excel system exports.</p>
                                     
-                                    <div class="space-y-4 pt-2">
-                                        <div class="flex flex-col gap-2 p-4 bg-indigo-50/50 border border-indigo-100 rounded-2xl">
-                                            <div class="flex items-center justify-between">
-                                                <span class="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Auto-Export (IST)</span>
-                                                <button @click="toggleAutoExport()"
-                                                        :class="autoExportEnabled ? 'bg-indigo-600' : 'bg-zinc-300'"
-                                                        class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none shrink-0">
-                                                    <span :class="autoExportEnabled ? 'translate-x-5' : 'translate-x-1'" class="inline-block h-3 w-3 transform rounded-full bg-white transition-transform"></span>
-                                                </button>
-                                            </div>
-                                            <div x-show="autoExportEnabled" class="
-flex items-center gap-3 pt-2 border-t border-indigo-100">
-                                                <input type="time" x-model="autoExportTime" @change="saveAutoExportSettings()" class="flex-1 px-4 py-2 bg-white border border-indigo-200 text-indigo-900 rounded-xl text-xs font-bold outline-none w-full">
-                                                <span class="text-[9px] font-black text-indigo-400 uppercase">Daily</span>
-                                            </div>
-                                        </div>
+                                    <div x-show="autoExportEnabled" class="mt-auto flex items-center gap-3 p-4 bg-indigo-50 border border-indigo-100 rounded-xl">
+                                        <span class="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Daily at:</span>
+                                        <input type="time" x-model="autoExportTime" @change="saveAutoExportSettings()" class="flex-1 bg-transparent text-indigo-900 font-black outline-none">
+                                        <span class="text-[10px] font-black text-indigo-400 uppercase">IST</span>
                                     </div>
-
-                                   <div class="space-y-3 mt-auto pt-4 border-t border-zinc-100 relative">
-                                        <div class="relative w-full">
-                                            <input type="file" accept=".xlsx, .xls" @change="importFromExcel" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" title="Upload Excel Backup">
-                                            <button class="w-full py-3 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase border border-[#0f4c81] shadow-md transition-colors relative z-0 flex items-center justify-center gap-2">
-                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                                                Restore / Import Excel
-                                            </button>
-                                        </div>
-                                        
-                                        <div class="relative w-full">
-                                            <input type="file" accept=".json" @change="importFromJson" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" title="Upload JSON Backup">
-                                            <button class="w-full py-3 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase border border-[#0f4c81] shadow-md transition-colors relative z-0 flex items-center justify-center gap-2">
-                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M12 3v12"/><polyline points="8 11 12 15 16 11"/></svg>
-                                                Restore / Import JSON
-                                            </button>
-                                        </div>
-
-                                        <button @click="executeFullSystemExport(false)" class="w-full py-3 bg-[#0f4c81] hover:bg-[#0a3861] text-white border border-[#0f4c81] rounded-xl font-black text-[10px] uppercase shadow-md transition-colors">Download System Excel</button>
-                                        <button @click="exportBackupJSON()" class="w-full py-3 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase border border-[#0f4c81] transition-colors">System JSON Backup</button>
+                                    <div x-show="!autoExportEnabled" class="mt-auto p-4 bg-zinc-50 border border-zinc-100 rounded-xl text-center">
+                                        <span class="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Automation Disabled</span>
                                     </div>
                                 </div>
-                                <div class="bg-rose-50 p-8 rounded-[2rem] border border-rose-100 shadow-xl space-y-6 flex flex-col h-full">
-                                    <div class="space-y-1">
-                                        <h5 class="text-xl font-black uppercase text-rose-600 leading-none">Purge Vault</h5>
-                                        <p class="text-[9px] font-bold text-rose-400 uppercase tracking-widest">Global Data Wipe</p>
-                                    </div>
-                                    <button @click="confirmWipe('local')" class="w-full py-4 bg-rose-600 text-white rounded-xl font-black text-[10px] uppercase border border-rose-700 mt-auto shadow-sm hover:bg-rose-700 transition-all active:scale-95">Initiate Complete Wipe</button>
+
+                                <div class="bg-emerald-50 p-8 rounded-[2rem] border border-emerald-100 shadow-sm flex flex-col h-full">
+                                    <h5 class="text-xl font-black uppercase text-emerald-700 mb-2">System Export</h5>
+                                    <p class="text-xs font-bold text-emerald-600/70 mb-6">Download a complete, multi-sheet Excel snapshot covering all personnel, logs, and holidays.</p>
+                                    
+                                    <button @click="executeFullSystemExport(false)" class="w-full mt-auto py-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-black text-[11px] uppercase tracking-widest shadow-md transition-colors active:scale-95">
+                                        Download Complete Database
+                                    </button>
                                 </div>
                             </div>
                         </div>
-
-                    </div>
-                </div>
             </template>
         </div>
     </main>
