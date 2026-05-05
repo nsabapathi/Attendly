@@ -145,7 +145,7 @@ window.attendanceApp = () => {
         ],
 
         menuItems:[
-            { id: 'portal', label: 'Personnel', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
+            { id: 'portal', label: '', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' },
             { id: 'dashboard', label: 'Stats', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>', admin: true },
             { id: 'record', label: 'Log', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>', admin: true },
             { id: 'members', label: 'Roster', icon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>', admin: true },
@@ -825,7 +825,26 @@ window.attendanceApp = () => {
         async forceCaptcha(mId) {
             if (!this.isAdminAuthenticated && !this.isManagerOrLead) return;
             const checkTime = this.getCurrentTimeIST();
-            const dateKey = this.currentDate;
+            
+            // --- NEW LOGIC: Find the actual open shift in the logs ---
+            const todayStr = getISTString();
+            
+            const yDate = getISTDateObject();
+            yDate.setDate(yDate.getDate() - 1);
+            const yesterdayStr = getISTString(yDate);
+
+            let dateKey = this.currentDate; // Default to the UI date the admin is looking at
+
+            // OVERRIDE: Check if the user has an actively open shift right now.
+            // If they punched in yesterday but haven't punched out, it's yesterday's shift.
+            if (this.punchLogs[yesterdayStr]?.[mId]?.in && !this.punchLogs[yesterdayStr]?.[mId]?.out) {
+                dateKey = yesterdayStr;
+            } 
+            // Otherwise, if they punched in today and haven't punched out, it's today's shift.
+            else if (this.punchLogs[todayStr]?.[mId]?.in && !this.punchLogs[todayStr]?.[mId]?.out) {
+                dateKey = todayStr;
+            }
+            // ---------------------------------------------------------
             
             if (!this.punchLogs[dateKey]) this.punchLogs[dateKey] = {};
             if (!this.punchLogs[dateKey][mId]) this.punchLogs[dateKey][mId] = { in: '', out: '', breaks:[], captchas:[] };
@@ -841,7 +860,7 @@ window.attendanceApp = () => {
                 await this.supabase.from('captcha_logs').insert({
                     member_id: mId, log_date: dateKey, check_time: checkTime, status: 'Pending'
                 });
-                this.showNote("Verification Check Forced Successfully", "success");
+                this.showNote(`Verification Forced on ${dateKey} log`, "success");
             } catch(e) {
                 console.error(e);
                 this.showNote("Failed to force verify", "error");
@@ -1153,6 +1172,7 @@ window.attendanceApp = () => {
                 this.scheduleNextCaptcha();
             }
         },
+
         diffInMins(t1, t2) {
             if(!t1 || !t2) return 0;
             const p = (str) => {
@@ -1472,6 +1492,22 @@ window.attendanceApp = () => {
 
                 await this.syncUserData(true);
 
+                // ---> FIX: MOVED EXCEPTION FETCH HERE <---
+                const { data: excData } = await this.supabase
+                    .from('member_exceptions_view')
+                    .select('date, status')
+                    .eq('member_id', this.userSession.id)
+                    .order('date', { ascending: false });
+
+                if (excData) {
+                    this.userExceptionHistory = excData.map(log => ({
+                        date: log.date,
+                        label: this.formatDate(log.date),
+                        status: this.statusOptions.find(s => s.id === log.status)
+                    }));
+                }
+                // -----------------------------------------
+
                 const trapDate = this.getActiveShiftDate(); 
                 
                 const todaysCaptchas = this.punchLogs[trapDate]?.[uid]?.captchas ||[];
@@ -1517,20 +1553,6 @@ window.attendanceApp = () => {
                     return;
                 }
 
-                const { data: excData } = await this.supabase
-                    .from('member_exceptions_view')
-                    .select('date, status')
-                    .eq('member_id', this.userSession.id)
-                    .order('date', { ascending: false });
-
-                if (excData) {
-                    this.userExceptionHistory = excData.map(log => ({
-                        date: log.date,
-                        label: this.formatDate(log.date),
-                        status: this.statusOptions.find(s => s.id === log.status)
-                    }));
-                }
-
                 const activeDate = this.getActiveShiftDate(), uId = this.userSession.id;
                 if (!this.attendanceData[activeDate]) this.attendanceData[activeDate] = {}; 
                 if (!this.attendanceData[activeDate][uId]) {
@@ -1551,7 +1573,7 @@ window.attendanceApp = () => {
             } 
         },
 
-        async handlePinSetup() { 
+async handlePinSetup() { 
             if (this.loginPinInput.length === 6) { 
                 const idx = this.members.findIndex(m => m.id === this.tempUser.id); 
                 if (idx !== -1) { 
@@ -1560,6 +1582,22 @@ window.attendanceApp = () => {
                     this.userSession = JSON.parse(JSON.stringify(this.members[idx])); 
                     this.setupUserRealtime();
                     await this.syncUserData(true); 
+
+                    // ---> FIX: MOVED EXCEPTION FETCH HERE <---
+                    const { data: excData } = await this.supabase
+                        .from('member_exceptions_view')
+                        .select('date, status')
+                        .eq('member_id', this.userSession.id)
+                        .order('date', { ascending: false });
+
+                    if (excData) {
+                        this.userExceptionHistory = excData.map(log => ({
+                            date: log.date,
+                            label: this.formatDate(log.date),
+                            status: this.statusOptions.find(s => s.id === log.status)
+                        }));
+                    }
+                    // -----------------------------------------
 
                     const setupTrapDate = this.getActiveShiftDate();
                     const setupUid = this.userSession.id;
@@ -1585,20 +1623,6 @@ window.attendanceApp = () => {
                         
                         this.loginStep = 'id'; this.loginIdInput = ''; this.loginPinInput = ''; this.tempUser = null;
                         return;
-                    }
-
-                    const { data: excData } = await this.supabase
-                        .from('member_exceptions_view')
-                        .select('date, status')
-                        .eq('member_id', this.userSession.id)
-                        .order('date', { ascending: false });
-
-                    if (excData) {
-                        this.userExceptionHistory = excData.map(log => ({
-                            date: log.date,
-                            label: this.formatDate(log.date),
-                            status: this.statusOptions.find(s => s.id === log.status)
-                        }));
                     }
 
                     const activeDate = this.getActiveShiftDate(), uId = this.userSession.id;
@@ -2121,7 +2145,7 @@ window.attendanceApp = () => {
     <main class="flex-1 flex flex-col overflow-hidden relative">
         <header class="shrink-0 px-4 md:px-10 pt-4 md:pt-6 pb-4 flex flex-col gap-4 no-print z-[1000] relative">
             <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                <h2 class="text-3xl md:text-5xl font-black text-zinc-950 tracking-tighter capitalize" x-text="view === 'master' ? 'Master Config' : (view === 'portal' ? 'Personnel' : (view === 'summary' ? 'Reports' : view))"></h2>
+                <h2 class="text-3xl md:text-5xl font-black text-zinc-950 tracking-tighter capitalize" x-text="view === 'master' ? 'Master Config' : (view === 'portal' ? '' : (view === 'summary' ? 'Reports' : view))"></h2>
                 <div class="flex flex-col sm:flex-row items-center gap-4 w-full lg:w-auto" x-show="view !== 'import' && view !== 'portal' && view !== 'master' && isAdminAuthenticated">
                     <select x-model="filterName" @change="handleNameFilterChange()" class="w-full sm:w-[280px] px-6 py-3 md:py-4 bg-white border border-zinc-200 rounded-[1.5rem] text-[13px] font-bold shadow-sm outline-none appearance-none cursor-pointer hover:bg-zinc-50 transition-colors">
                         <option value="">All Personnel</option>
@@ -2213,105 +2237,101 @@ window.attendanceApp = () => {
                     </template>
 
                     <div class="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                        <div class="flex items-center gap-6">
-                            <div class="w-24 h-24 rounded-[2rem] bg-[#0f4c81] flex items-center justify-center text-white text-4xl font-black shadow-2xl border-4 border-white shrink-0" x-text="userSession?.firstName.charAt(0)"></div>
-                            <div class="space-y-1">
-                                <h3 class="text-5xl font-black tracking-tighter leading-tight" x-text="'Hello ' + userSession?.firstName"></h3>
-                                <p class="text-sm text-zinc-400 font-bold uppercase tracking-[0.2em]" x-text="(userSession?.role || 'Staff') + ' • ' + (userSession?.dept || 'General')"></p>
-                            </div>
-                        </div>
-                        
-                        <div class="flex flex-col items-end justify-center shrink-0 bg-transparent px-5 py-3 rounded-[1.5rem] relative overflow-hidden">
-                            <div class="flex items-center gap-2 mb-0.5 z-10">
-                                <span class="w-1.5 h-1.5 rounded-full bg-[#f26522] animate-pulse"></span>
-                                <span class="text-[9px] font-black uppercase tracking-widest text-zinc-400">IST Time</span>
-                            </div>
-                            <h2 class="text-2xl font-black tracking-tighter tabular-nums text-[#0f4c81] z-10 leading-none" x-text="currentISTTimeWidget || '--:--'"></h2>
-                            <p class="text-[9px] font-bold text-zinc-500 uppercase tracking-widest z-10 mt-1" x-text="currentISTDateWidget || '---'"></p>
-                        </div>
-                    </div>
+    
+    <div class="flex items-center gap-6">
+        <div class="w-24 h-24 rounded-[2rem] bg-[#0f4c81] flex items-center justify-center text-white text-4xl font-black shadow-2xl border-4 border-white shrink-0" x-text="userSession?.firstName.charAt(0)"></div>
+        <div class="space-y-1">
+            <h3 class="text-5xl font-black tracking-tighter leading-tight" x-text="'Hello ' + userSession?.firstName"></h3>
+            <p class="text-sm text-zinc-400 font-bold uppercase tracking-[0.2em]" x-text="(userSession?.role || 'Staff') + ' • ' + (userSession?.dept || 'General')"></p>
+        </div>
+    </div>
+    
+    <div class="flex items-center gap-3 shrink-0">
+        <button @click="showLeaveModal = true" class="px-5 py-3.5 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-600 rounded-2xl font-black transition-all shadow-sm active:scale-95 flex items-center justify-center gap-2.5" title="Request Time-Off">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span class="hidden sm:inline text-xs uppercase tracking-widest">Time-Off</span>
+        </button>
+        <button @click="initiateLogout()" class="px-6 py-3.5 bg-zinc-900 hover:bg-black text-white rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl active:scale-95 flex items-center justify-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Out
+        </button>
+    </div>
 
-                    <div class="flex flex-col gap-6 w-full">
-                        
+</div> <div class="flex flex-col gap-6 w-full">
+                       
 <!-- COMPACT ACTIVE SHIFT RECORD -->
-                        <div class="flex-1 bg-white rounded-[1.5rem] border border-zinc-100 shadow-md flex flex-col justify-between portal-card relative overflow-hidden w-full">
-                            <div class="p-5 flex flex-col gap-4">
-                                <!-- Header Row -->
-                                <div class="flex items-center justify-between">
-                                    <div class="flex items-center gap-3">
-                                        <span class="relative flex h-2.5 w-2.5 shrink-0">
-                                            <span x-show="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in && !punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out && !userOnBreak" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                                            <span class="relative inline-flex rounded-full h-2.5 w-2.5" 
-                                                  :class="userOnBreak ? 'bg-amber-500' : (punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out ? 'bg-zinc-300' : 'bg-emerald-500')"></span>
-                                        </span>
-                                        <h2 class="text-xl font-black tracking-tight uppercase text-zinc-950" x-text="formatDate(getActiveShiftDate())"></h2>
-                                        <span class="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400 border-l border-zinc-200 pl-3">Active Shift</span>
-                                    </div>
-                                    
-                                    <div x-show="userOnBreak" class="px-2.5 py-1 bg-amber-50 text-amber-600 rounded-lg text-[9px] font-black uppercase tracking-widest border border-amber-200 shadow-sm flex items-center gap-1.5 animate-pulse">
-                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                                        On Break
-                                    </div>
-                                </div>
 
-                                <!-- Timings & Actions Row -->
-                                <div class="flex flex-col md:flex-row gap-3 items-stretch">
-                                    <!-- Timings Strip -->
-                                    <div class="flex bg-zinc-50 rounded-xl border border-zinc-100 p-1 flex-1 shadow-inner">
-                                        <div class="flex-1 flex flex-col items-center justify-center py-1.5 border-r border-zinc-100">
-                                            <span class="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-0.5">In</span>
-                                            <span class="text-sm font-black text-emerald-600" x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in || '--:--'"></span>
-                                        </div>
-                                        <div class="flex-1 flex flex-col items-center justify-center py-1.5 border-r border-zinc-100">
-                                            <span class="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-0.5">Out</span>
-                                            <span class="text-sm font-black text-rose-600" x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out || '--:--'"></span>
-                                        </div>
-                                        <div class="flex-1 flex flex-col items-center justify-center py-1.5 transition-all" :class="userOnBreak ? 'bg-amber-100/50 rounded-lg' : ''">
-                                            <span class="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-0.5">Break</span>
-                                            <span class="text-sm font-black" :class="userOnBreak ? 'text-amber-600' : 'text-zinc-700'" x-text="formatBreakDisplay(calculateTotalBreakMins(punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks))"></span>
-                                        </div>
-                                    </div>
+<div class="flex-1 bg-white rounded-[1.5rem] border border-zinc-100 shadow-md flex flex-col justify-between portal-card relative overflow-hidden w-full">
+    <div class="p-5 flex flex-col gap-4">
+        
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            
+            <div class="flex items-center gap-3">
+                <div class="flex items-baseline gap-2">
+                    <h2 class="text-xl font-black tracking-tight uppercase text-zinc-950" x-text="formatDate(getActiveShiftDate())"></h2>
+                    <span class="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400 border-l border-zinc-200 pl-2 ml-1">Active Shift</span>
+                </div>
 
-                                    <!-- Action Buttons -->
-                                    <div class="flex gap-2 shrink-0">
-                                        <template x-if="!userOnBreak && punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in && !punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out">
-                                            <button @click="startBreak()" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm active:scale-95 flex items-center justify-center gap-1.5">
-                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
-                                                Break
-                                            </button>
-                                        </template>
-                                        
-                                        <template x-if="userOnBreak">
-                                            <button @click="endBreak()" class="px-4 py-2 bg-[#f26522] hover:bg-[#d9561c] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-[0_0_10px_rgba(242,101,34,0.4)] animate-pulse active:scale-95 flex items-center justify-center gap-1.5">
-                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                                                Resume
-                                            </button>
-                                        </template>
-                                        
-                                        <button @click="initiateLogout()" class="px-4 py-2 bg-zinc-900 hover:bg-black text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm active:scale-95 flex items-center justify-center gap-1.5">
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-                                            Out
-                                        </button>
-                                        
-                                        <button @click="showLeaveModal = true" class="px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded-xl font-black transition-all shadow-sm active:scale-95 flex items-center justify-center" title="Request Time-Off">
-                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Thin Verification Footer -->
-                            <div class="bg-indigo-50/50 border-t border-indigo-100/50 px-5 py-2.5 flex items-center justify-between">
-                                <div class="flex items-center gap-2">
-                                    <svg width="14" height="14" class="text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                                    <span class="text-[9px] font-black uppercase tracking-widest text-indigo-900">Verification <span class="hidden sm:inline text-indigo-400 border-l border-indigo-200 ml-1.5 pl-1.5">Random Check (20-35m)</span></span>
-                                </div>
-                                <div :class="userSession?.captchaEnabled ? 'bg-[#f26522]' : 'bg-zinc-300'" class="relative inline-flex h-4 w-7 items-center rounded-full transition-all cursor-not-allowed opacity-90" title="Security settings are controlled by Administration">
-                                    <span :class="userSession?.captchaEnabled ? 'translate-x-3.5' : 'translate-x-0.5'" class="inline-block h-2.5 w-2.5 transform rounded-full bg-white transition-transform shadow-sm"></span>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- END COMPACT ACTIVE SHIFT RECORD -->
+                <div x-show="userOnBreak" class="px-2.5 py-1 bg-amber-50 text-amber-600 rounded-lg text-[9px] font-black uppercase tracking-widest border border-amber-200 shadow-sm flex items-center gap-1.5 animate-pulse">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    On Break
+                </div>
+            </div>
+            
+            <div class="flex flex-col sm:items-end text-left sm:text-right shrink-0">
+                <span class="text-[8px] font-black uppercase tracking-[0.2em] text-zinc-400 mb-0.5">IST Time & Date</span>
+                <div class="flex items-baseline gap-2">
+                    <span class="text-lg font-black tabular-nums text-[#0f4c81]" x-text="currentISTTimeWidget || '--:--'"></span>
+                    <span class="text-[10px] font-bold text-zinc-500 uppercase tracking-widest" x-text="currentISTDateWidget || '---'"></span>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="flex flex-col md:flex-row gap-3 items-stretch mt-1">
+            <div class="flex bg-zinc-50 rounded-xl border border-zinc-100 p-1 flex-1 shadow-inner">
+                <div class="flex-1 flex flex-col items-center justify-center py-1.5 border-r border-zinc-100">
+                    <span class="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-0.5">In</span>
+                    <span class="text-sm font-black text-emerald-600" x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in || '--:--'"></span>
+                </div>
+                <div class="flex-1 flex flex-col items-center justify-center py-1.5 border-r border-zinc-100">
+                    <span class="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-0.5">Out</span>
+                    <span class="text-sm font-black text-rose-600" x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out || '--:--'"></span>
+                </div>
+                <div class="flex-1 flex flex-col items-center justify-center py-1.5 transition-all" :class="userOnBreak ? 'bg-amber-100/50 rounded-lg' : ''">
+                    <span class="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-0.5">Break</span>
+                    <span class="text-sm font-black" :class="userOnBreak ? 'text-amber-600' : 'text-zinc-700'" x-text="formatBreakDisplay(calculateTotalBreakMins(punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks))"></span>
+                </div>
+            </div>
+
+            <div class="flex gap-2 shrink-0">
+                <template x-if="!userOnBreak && punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in && !punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out">
+                    <button @click="startBreak()" class="w-full md:w-auto px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-black text-[11px] uppercase tracking-widest transition-all shadow-sm active:scale-95 flex items-center justify-center gap-1.5">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+                        Start Break
+                    </button>
+                </template>
+                
+                <template x-if="userOnBreak">
+                    <button @click="endBreak()" class="w-full md:w-auto px-6 py-2 bg-[#f26522] hover:bg-[#d9561c] text-white rounded-xl font-black text-[11px] uppercase tracking-widest transition-all shadow-[0_0_10px_rgba(242,101,34,0.4)] animate-pulse active:scale-95 flex items-center justify-center gap-1.5">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        Resume Work
+                    </button>
+                </template>
+            </div>
+        </div>
+    </div>
+    
+    <div class="bg-indigo-50/50 border-t border-indigo-100/50 px-5 py-2.5 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <svg width="14" height="14" class="text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span class="text-[9px] font-black uppercase tracking-widest text-indigo-900">Verification <span class="hidden sm:inline text-indigo-400 border-l border-indigo-200 ml-1.5 pl-1.5">Random Check (20-35m)</span></span>
+        </div>
+        <div :class="userSession?.captchaEnabled ? 'bg-[#f26522]' : 'bg-zinc-300'" class="relative inline-flex h-4 w-7 items-center rounded-full transition-all cursor-not-allowed opacity-90" title="Security settings are controlled by Administration">
+            <span :class="userSession?.captchaEnabled ? 'translate-x-3.5' : 'translate-x-0.5'" class="inline-block h-2.5 w-2.5 transform rounded-full bg-white transition-transform shadow-sm"></span>
+        </div>
+    </div>
+</div>                        <!-- END COMPACT ACTIVE SHIFT RECORD -->
 
                         <div x-show="isManagerOrLead" class="flex-1 bg-white p-6 rounded-[2rem] border border-zinc-100 shadow-sm flex flex-col justify-center portal-card w-full">
                             <div class="flex items-center justify-between mb-4">
