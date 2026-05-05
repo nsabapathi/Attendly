@@ -39,7 +39,7 @@ window.attendanceApp = () => {
     const lastDayStr = getISTString(new Date(todayObj.getFullYear(), todayObj.getMonth() + 1, 0));
 
     return {
-	view: 'portal', 
+        view: 'portal', 
         dashboardPeriod: 'month',
         portalPeriod: 'month', 
         filterName: '', 
@@ -56,7 +56,7 @@ window.attendanceApp = () => {
         newPinValue: '',
 
         userSession: null,
-	userSyncChannel: null, 
+        userSyncChannel: null, 
         loginIdInput: '',
         loginPinInput: '',
         breakPinInput: '',
@@ -97,8 +97,8 @@ window.attendanceApp = () => {
         members:[],
         attendanceData: {}, 
         punchLogs: {}, 
-	ytdStats: {}, 
-	userExceptionHistory:[], 
+        ytdStats: {}, 
+        userExceptionHistory:[], 
         leaveRequests:[], 
         roles:[],
         departments: [],
@@ -155,6 +155,16 @@ window.attendanceApp = () => {
         ],
 
         init() {
+            if ("Notification" in window && Notification.permission === "default") {
+                Notification.requestPermission()
+                    .then(permission => {
+                        if (permission === "granted") {
+                            console.log("Notifications enabled on launch.");
+                        }
+                    })
+                    .catch(e => console.warn("Auto-prompt blocked:", e));
+            }   
+
             this.userSession = null;
             this.supabase = supabase.createClient(this.supabaseUrl, this.supabaseKey);
 
@@ -178,9 +188,14 @@ window.attendanceApp = () => {
                 }).format(now);
             }, 1000);
             
-            this.syncInitialConfig();['mousemove', 'keydown', 'mousedown', 'touchstart'].forEach(evt => {
+            this.syncInitialConfig();
+            
+            ['mousemove', 'keydown', 'mousedown', 'touchstart'].forEach(evt => {
                 window.addEventListener(evt, () => this.resetIdleTimer());
             });
+
+            // Sweep when the browser tab regains focus or wakes up from sleep
+            window.addEventListener('focus', () => this.checkExpiredCaptchas());
 
             setInterval(() => {
                 if (this.autoExportEnabled && this.autoExportTime) {
@@ -199,7 +214,6 @@ window.attendanceApp = () => {
                 const bc = new BroadcastChannel('revcentric_captcha');
                 bc.onmessage = (e) => {
                     if (e.data?.type === 'CAPTCHA_TRIGGERED' && this.userSession && e.data.userId === this.userSession.id) {
-                        // Another tab fired the captcha — bring this tab to attention too
                         try { window.focus(); } catch(err) {}
                         if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
                     }
@@ -220,6 +234,7 @@ window.attendanceApp = () => {
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance' }, p => this.handleRealtimePayload(p))
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'punch_logs' }, p => this.handleRealtimePayload(p))
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'break_logs' }, p => this.handleRealtimePayload(p))
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'captcha_logs' }, p => this.handleRealtimePayload(p))
                     .subscribe();
             } 
             else {
@@ -228,6 +243,7 @@ window.attendanceApp = () => {
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance', filter: `member_id=eq.${myId}` }, p => this.handleRealtimePayload(p))
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'punch_logs', filter: `member_id=eq.${myId}` }, p => this.handleRealtimePayload(p))
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'break_logs', filter: `member_id=eq.${myId}` }, p => this.handleRealtimePayload(p))
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'captcha_logs', filter: `member_id=eq.${myId}` }, p => this.handleRealtimePayload(p))
                     .subscribe();
             }
         },
@@ -282,6 +298,40 @@ window.attendanceApp = () => {
                 this.punchLogs[date][mId].breaks = breaks;
                 this.punchLogs = { ...this.punchLogs };
             }
+            else if (table === 'captcha_logs' && (eventType === 'INSERT' || eventType === 'UPDATE')) {
+                const date = newRec.log_date;
+                const mId = newRec.member_id;
+
+                if (!this.punchLogs[date]) this.punchLogs[date] = {};
+                if (!this.punchLogs[date][mId]) this.punchLogs[date][mId] = { in: '', out: '', breaks:[], captchas:[] };
+
+                let captchas = this.punchLogs[date][mId].captchas ||[];
+                let capIdx = captchas.findIndex(c => c.time === newRec.check_time);
+
+                if (capIdx !== -1) {
+                    captchas[capIdx].status = newRec.status;
+                } else {
+                    captchas.push({ time: newRec.check_time, status: newRec.status });
+                }
+
+                this.punchLogs[date][mId].captchas = captchas;
+                this.punchLogs = { ...this.punchLogs };
+
+                if (this.userSession && this.userSession.id === mId && newRec.status === 'Pending' && eventType === 'INSERT') {
+                    if (date === this.getActiveShiftDate()) {
+                        this.triggerCaptcha(newRec.check_time);
+                    }
+                }
+                
+                if (this.userSession && this.userSession.id === mId && newRec.status === 'Missed' && eventType === 'UPDATE') {
+                    if (this.showCaptchaModal && this.currentCaptchaTime === newRec.check_time) {
+                        this.showCaptchaModal = false;
+                        this.clearCaptchaTimers();
+                        this.currentCaptchaTime = null;
+                        this.showNote("System enforced timeout.", "error");
+                    }
+                }
+            }
         },
 
         // ==========================================
@@ -304,19 +354,16 @@ window.attendanceApp = () => {
             } catch(e) { console.error("Member save error", e); }
         },
 
-        // FIX: Explicit duplicate cleanup approach to solve "bounce back" issues natively
         async upsertAttCloud(date, mId, status) {
             try {
                 if (!status) {
                     await this.supabase.from('attendance').delete().match({ date, member_id: mId });
                 } else {
-                    // 1. Try updating matching rows first (fixes duplicate DB entries)
                     const { data, error } = await this.supabase.from('attendance')
                         .update({ status })
                         .match({ date, member_id: mId })
                         .select();
                         
-                    // 2. If it does not exist, safe to insert
                     if (!error && (!data || data.length === 0)) {
                         await this.supabase.from('attendance').insert({ date, member_id: mId, status });
                     }
@@ -324,7 +371,6 @@ window.attendanceApp = () => {
             } catch(e) { console.error("Attendance save error", e); }
         },
 
-        // FIX: Same explicitly safe approach for bulk updates to prevent duplicates
         async bulkUpsertAttCloud(recordsArray) {
             if (!recordsArray || recordsArray.length === 0) return;
             try {
@@ -347,13 +393,13 @@ window.attendanceApp = () => {
                 if (!log) return;
                 
                 const { data, error } = await this.supabase.from('punch_logs')
-                    .update({ in_time: log.in || null, out_time: log.out || null, breaks: log.breaks ||[], captchas: log.captchas ||[] })
+                    .update({ in_time: log.in || null, out_time: log.out || null, breaks: log.breaks ||[] })
                     .match({ date, member_id: mId })
                     .select();
                     
                 if (!error && (!data || data.length === 0)) {
                     await this.supabase.from('punch_logs').insert({
-                        date, member_id: mId, in_time: log.in || null, out_time: log.out || null, breaks: log.breaks ||[], captchas: log.captchas ||[]
+                        date, member_id: mId, in_time: log.in || null, out_time: log.out || null, breaks: log.breaks ||[]
                     });
                 }
             } catch(e) { console.error("Punch save error", e); }
@@ -463,10 +509,6 @@ window.attendanceApp = () => {
                 }
                 this.attendanceData = newAtt;
 
-                if (this.holidayList && this.holidayList.length > 0) {
-	                //this.processAutoHolidays();
-                }
-
                 let newPunch = {};
                 if (pData) {
                     pData.forEach(r => {
@@ -476,16 +518,17 @@ window.attendanceApp = () => {
                 }
                 if (bData) {
                     bData.forEach(b => {
-                        if (newPunch[b.log_date] && newPunch[b.log_date][b.member_id]) {
-                            newPunch[b.log_date][b.member_id].breaks.push({ start: b.start_time, end: b.end_time || '' });
-                        }
+                        if (!newPunch[b.log_date]) newPunch[b.log_date] = {};
+                        if (!newPunch[b.log_date][b.member_id]) newPunch[b.log_date][b.member_id] = { in: '', out: '', breaks: [], captchas:[] };
+                        newPunch[b.log_date][b.member_id].breaks.push({ start: b.start_time, end: b.end_time || '' });
                     });
                 }
                 if (capData) {
                     capData.forEach(c => {
-                        if (newPunch[c.log_date] && newPunch[c.log_date][c.member_id]) {
-                            newPunch[c.log_date][c.member_id].captchas.push({ time: c.check_time, status: c.status });
-                        }
+                        if (!newPunch[c.log_date]) newPunch[c.log_date] = {};
+                        if (!newPunch[c.log_date][c.member_id]) newPunch[c.log_date][c.member_id] = { in: '', out: '', breaks:[], captchas:[] };
+                        if (!newPunch[c.log_date][c.member_id].captchas) newPunch[c.log_date][c.member_id].captchas = [];
+                        newPunch[c.log_date][c.member_id].captchas.push({ time: c.check_time, status: c.status });
                     });
                 }
                 this.punchLogs = newPunch;
@@ -493,6 +536,8 @@ window.attendanceApp = () => {
                 if (this.userSession && !this.members.find(m => m.id === this.userSession.id)) {
                     this.logoutUser();
                 }
+                
+                this.checkExpiredCaptchas();
                 
                 this.syncError = false;
                 if (!silent) this.showNote("Database Synced", "success");
@@ -504,7 +549,7 @@ window.attendanceApp = () => {
             }
         },
 
-            async fetchHistoricalDate(targetDate) {
+        async fetchHistoricalDate(targetDate) {
             this.isSyncing = true;
             this.fetchedOldDates.add(targetDate); 
             
@@ -542,6 +587,7 @@ window.attendanceApp = () => {
                 if (capData) {
                     capData.forEach(c => {
                         if (!this.punchLogs[targetDate][c.member_id]) this.punchLogs[targetDate][c.member_id] = { in: '', out: '', breaks:[], captchas: [] };
+                        if (!this.punchLogs[targetDate][c.member_id].captchas) this.punchLogs[targetDate][c.member_id].captchas =[];
                         this.punchLogs[targetDate][c.member_id].captchas.push({ time: c.check_time, status: c.status });
                     });
                 }
@@ -582,26 +628,21 @@ window.attendanceApp = () => {
             if (this.captchaTimer) { clearTimeout(this.captchaTimer); this.captchaTimer = null; }
             if (this.captchaTimeoutTimer) { clearTimeout(this.captchaTimeoutTimer); this.captchaTimeoutTimer = null; }
 
-            // Stop looping audio alarm
             if (this._captchaAudio) {
                 try { this._captchaAudio.pause(); this._captchaAudio.currentTime = 0; } catch(e) {}
                 this._captchaAudio = null;
             }
 
-            // Stop vibration
             try { if (navigator.vibrate) navigator.vibrate(0); } catch(e) {}
 
-            // Remove visibility / focus listeners
             if (this._captchaVisibilityHandler) {
                 document.removeEventListener('visibilitychange', this._captchaVisibilityHandler);
                 window.removeEventListener('focus', this._captchaVisibilityHandler);
                 this._captchaVisibilityHandler = null;
             }
 
-            // Exit fullscreen (only if we triggered it — safe to call regardless)
             try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch(e) {}
 
-            // Stop the tab from flashing and restore original title
             if (this.titleFlashInterval) {
                 clearInterval(this.titleFlashInterval);
                 this.titleFlashInterval = null;
@@ -619,7 +660,6 @@ window.attendanceApp = () => {
             const maxMs = 35 * 60 * 1000;
             const interval = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
             this.captchaTimer = setTimeout(() => {
-                // Re-check conditions at fire time in case user has since punched out
                 const currentLog = this.punchLogs[this.getActiveShiftDate()]?.[this.userSession?.id];
                 if (this.userSession && this.userSession.captchaEnabled && !this.userOnBreak && currentLog?.in && !currentLog?.out) {
                     this.triggerCaptcha();
@@ -627,54 +667,55 @@ window.attendanceApp = () => {
             }, interval);
         },
 
-        triggerCaptcha() {
-            // ── HARD ENTRY GUARD — never fire if user is inactive ─────────────────
-            if (!this.userSession || !this.userSession.captchaEnabled) return;
-            if (this.userOnBreak) return;
+        triggerCaptcha(forceTime = null) {
+            this.checkExpiredCaptchas();
+            
+            if (!this.userSession) return;
+            
+            if (!forceTime && !this.userSession.captchaEnabled) return;
+            if (!forceTime && this.userOnBreak) return;
+            
             const _guardDate = this.getActiveShiftDate();
             const _guardLog = this.punchLogs[_guardDate]?.[this.userSession.id];
-            if (!_guardLog?.in || _guardLog?.out) return;
-            // ─────────────────────────────────────────────────────────────────────
+            if (!forceTime && (!_guardLog?.in || _guardLog?.out)) return;
 
             this.captchaTargetNumber = Math.floor(Math.random() * 10).toString();
             this.captchaInput = '';
             this.showCaptchaModal = true;
 
-            // Log "Pending" immediately
-            this.currentCaptchaTime = this.getCurrentTimeIST();
-            this.recordCaptchaResult('Pending', this.currentCaptchaTime);
+            if (forceTime) {
+                this.currentCaptchaTime = forceTime;
+            } else {
+                this.currentCaptchaTime = this.getCurrentTimeIST();
+                this.recordCaptchaResult('Pending', this.currentCaptchaTime);
+            }
 
-            // ── 1. SYSTEM PUSH NOTIFICATION (shows outside the browser) ──────────
             if ("Notification" in window && Notification.permission === "granted") {
                 try {
                     new Notification("🚨 Identity Verification Required", {
                         body: "Return to RevCentric NOW and enter your code. Failure will lock your session.",
                         icon: "logo.png",
-                        requireInteraction: true,   // stays until user clicks
-                        vibrate: [300, 100, 300, 100, 300],
-                        tag: "captcha-alert",       // replaces previous if already showing
+                        requireInteraction: true,
+                        vibrate:[300, 100, 300, 100, 300],
+                        tag: "captcha-alert",
                         renotify: true
                     });
                 } catch(e) {}
             }
 
-            // ── 2. FORCE WINDOW FOCUS (brings browser to front) ──────────────────
             try { window.focus(); } catch(e) {}
 
-            // ── 3. FULLSCREEN (steals focus on mobile / kiosk devices) ────────────
             try {
                 const el = document.documentElement;
                 if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
                 else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
             } catch(e) {}
 
-            // ── 4. REPEATING AUDIO ALARM (loops until captcha is dismissed) ───────
             try {
                 this._captchaAudio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
                 this._captchaAudio.loop = true;
                 this._captchaAudio.volume = 1.0;
                 this._captchaAudio.play().catch(() => {
-                    // If autoplay blocked (user hasn't interacted yet), retry once on next user gesture
                     const unlockAudio = () => {
                         this._captchaAudio?.play().catch(() => {});
                         document.removeEventListener('click', unlockAudio);
@@ -685,12 +726,10 @@ window.attendanceApp = () => {
                 });
             } catch(e) {}
 
-            // ── 5. DEVICE VIBRATION (mobile) ──────────────────────────────────────
             try {
                 if (navigator.vibrate) navigator.vibrate([500, 200, 500, 200, 500, 200, 1000]);
             } catch(e) {}
 
-            // ── 6. TAB TITLE FLASHING ─────────────────────────────────────────────
             const originalTitle = document.title || "RevCentric Solutions";
             let isFlashing = false;
             this.titleFlashInterval = setInterval(() => {
@@ -698,14 +737,12 @@ window.attendanceApp = () => {
                 isFlashing = !isFlashing;
             }, 800);
 
-            // ── 7. BROADCAST TO ALL OPEN TABS (multi-tab environments) ────────────
             try {
                 const bc = new BroadcastChannel('revcentric_captcha');
                 bc.postMessage({ type: 'CAPTCHA_TRIGGERED', userId: this.userSession?.id });
                 bc.close();
             } catch(e) {}
 
-            // ── 8. RE-FOCUS INPUT EVERY TIME USER RETURNS TO THIS TAB ─────────────
             this._captchaVisibilityHandler = () => {
                 if (!document.hidden && this.showCaptchaModal) {
                     try { window.focus(); } catch(e) {}
@@ -719,7 +756,6 @@ window.attendanceApp = () => {
             document.addEventListener('visibilitychange', this._captchaVisibilityHandler);
             window.addEventListener('focus', this._captchaVisibilityHandler);
 
-            // ── 9. THE 2-MINUTE TIMEOUT ───────────────────────────────────────────
             this.captchaTimeoutTimer = setTimeout(() => {
                 this.handleCaptchaTimeout();
             }, 120000);
@@ -738,7 +774,6 @@ window.attendanceApp = () => {
                 this.showNote("Verified Successfully", "success");
                 this.scheduleNextCaptcha();
             } else {
-                // Auto-initiate break upon failure
                 this.showNote("Verification Failed. Auto-initiating break.", "error");
                 this.startBreak();
             }
@@ -752,7 +787,6 @@ window.attendanceApp = () => {
             this.recordCaptchaResult('Missed');
             this.currentCaptchaTime = null;
             
-            // Auto-initiate break upon missing the timeout window
             this.showNote("Verification Missed. Auto-initiating break.", "error");
             this.startBreak();
         },
@@ -764,10 +798,9 @@ window.attendanceApp = () => {
             const checkTime = timeOverride || this.currentCaptchaTime || this.getCurrentTimeIST();
             
             if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
-            if (!this.punchLogs[activeDate][uId]) this.punchLogs[activeDate][uId] = { in: '', out: '', breaks:[], captchas: [] };
+            if (!this.punchLogs[activeDate][uId]) this.punchLogs[activeDate][uId] = { in: '', out: '', breaks:[], captchas:[] };
             if (!this.punchLogs[activeDate][uId].captchas) this.punchLogs[activeDate][uId].captchas = [];
             
-            // Update local state: if a record exists for this time, update it. Else, push a new one.
             const existingIdx = this.punchLogs[activeDate][uId].captchas.findIndex(c => c.time === checkTime);
             if (existingIdx > -1) {
                 this.punchLogs[activeDate][uId].captchas[existingIdx].status = status;
@@ -778,17 +811,41 @@ window.attendanceApp = () => {
             
             try {
                 if (status === 'Pending') {
-                    // 1. Insert the trap
                     await this.supabase.from('captcha_logs').insert({
                         member_id: uId, log_date: activeDate, check_time: checkTime, status: status
                     });
                 } else {
-                    // 2. Update the trap (User passed/failed/missed legitimately)
                     await this.supabase.from('captcha_logs')
                         .update({ status: status })
                         .match({ member_id: uId, log_date: activeDate, check_time: checkTime });
                 }
             } catch(e) { console.error("Captcha log error", e); }
+        },
+
+        async forceCaptcha(mId) {
+            if (!this.isAdminAuthenticated && !this.isManagerOrLead) return;
+            const checkTime = this.getCurrentTimeIST();
+            const dateKey = this.currentDate;
+            
+            if (!this.punchLogs[dateKey]) this.punchLogs[dateKey] = {};
+            if (!this.punchLogs[dateKey][mId]) this.punchLogs[dateKey][mId] = { in: '', out: '', breaks:[], captchas:[] };
+            if (!this.punchLogs[dateKey][mId].captchas) this.punchLogs[dateKey][mId].captchas = [];
+            
+            const exists = this.punchLogs[dateKey][mId].captchas.find(c => c.time === checkTime);
+            if (!exists) {
+                this.punchLogs[dateKey][mId].captchas.push({ time: checkTime, status: 'Pending' });
+                this.punchLogs = { ...this.punchLogs };
+            }
+
+            try {
+                await this.supabase.from('captcha_logs').insert({
+                    member_id: mId, log_date: dateKey, check_time: checkTime, status: 'Pending'
+                });
+                this.showNote("Verification Check Forced Successfully", "success");
+            } catch(e) {
+                console.error(e);
+                this.showNote("Failed to force verify", "error");
+            }
         },
 
         get isManagerOrLead() {
@@ -872,24 +929,17 @@ window.attendanceApp = () => {
 
         processAutoHolidays() {
             const bulkRecords =[];
-            
             this.holidayList.forEach(h => {
                 this.members.forEach(m => {
                     if (h.dept === 'All' || h.dept === m.dept) {
                         if (!this.attendanceData[h.date]?.[m.id]) {
                             if(!this.attendanceData[h.date]) this.attendanceData[h.date] = {};
                             this.attendanceData[h.date][m.id] = 'fh';
-                            
-                            bulkRecords.push({
-                                date: h.date,
-                                member_id: m.id,
-                                status: 'fh'
-                            });
+                            bulkRecords.push({ date: h.date, member_id: m.id, status: 'fh' });
                         }
                     }
                 });
             });
-            
             if (bulkRecords.length > 0) {
                 this.attendanceData = { ...this.attendanceData }; 
                 this.bulkUpsertAttCloud(bulkRecords);
@@ -902,7 +952,6 @@ window.attendanceApp = () => {
             this.holidayList.push(h);
             this.upsertHolidayCloud(h); 
             this.newHoliday = { name: '', date: '', dept: 'All' };
-            //this.processAutoHolidays();
             this.showNote("Holiday Processed Successfully");
         },
 
@@ -940,47 +989,132 @@ window.attendanceApp = () => {
         },
 
         resetIdleTimer() {
-    if (this.idleTimer) clearTimeout(this.idleTimer);
-    
-    const monitorAdmin = this.isAdminAuthenticated;
-    const monitorUser = this.userSession && !this.userSession.captchaEnabled && !this.userOnBreak;
+            if (this.idleTimer) clearTimeout(this.idleTimer);
+            
+            const monitorAdmin = this.isAdminAuthenticated;
+            const monitorUser = this.userSession && !this.userSession.captchaEnabled && !this.userOnBreak;
 
-    if (monitorAdmin || monitorUser) {
-        this.idleTimer = setTimeout(() => { 
-            if (this.isAdminAuthenticated) { 
-                this.logoutAdmin(); 
-                this.showNote("Vault auto-locked due to inactivity", "error"); 
+            if (monitorAdmin || monitorUser) {
+                this.idleTimer = setTimeout(() => { 
+                    if (this.isAdminAuthenticated) { 
+                        this.logoutAdmin(); 
+                        this.showNote("Vault auto-locked due to inactivity", "error"); 
+                    }
+                    if (this.userSession && !this.userSession.captchaEnabled && !this.userOnBreak) {
+                        this.logoutUser(); 
+                        this.showNote("Session expired due to inactivity", "error");
+                    }
+                }, this.idleTimeout); 
             }
-            if (this.userSession && !this.userSession.captchaEnabled && !this.userOnBreak) {
-                this.logoutUser(); 
-                this.showNote("Session expired due to inactivity", "error");
-            }
-        }, this.idleTimeout); 
-    }
-},
+        },
 
-        async startBreak() {
+        checkExpiredCaptchas() {
+            const now = this.getCurrentTimeIST();
+            let updated = false;
+
+            if (this.userSession) {
+                const today = this.getActiveShiftDate();
+                const uid = this.userSession.id;
+                const log = this.punchLogs[today]?.[uid];
+                
+                if (log && log.captchas) {
+                    const pendings = log.captchas.filter(c => c.status === 'Pending');
+                    for (const cap of pendings) {
+                        if (this.diffInMins(cap.time, now) >= 2) {
+                            cap.status = 'Missed';
+                            updated = true;
+                            
+                            if (this.showCaptchaModal && this.currentCaptchaTime === cap.time) {
+                                this.showCaptchaModal = false;
+                                this.clearCaptchaTimers();
+                                this.currentCaptchaTime = null;
+                            }
+                            
+                            this.supabase.from('captcha_logs')
+                                .update({ status: 'Missed' })
+                                .match({ member_id: uid, log_date: today, check_time: cap.time }).then();
+                                
+                            if (!this.userOnBreak) {
+                                this.showNote("Verification Missed (Timeout). Tool Locked.", "error");
+                                this.startBreak(cap.time); 
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (this.isAdminAuthenticated || this.isManagerOrLead) {
+                const checkDate = this.currentDate; 
+                if (this.punchLogs[checkDate]) {
+                    for (const mId in this.punchLogs[checkDate]) {
+                        if (this.userSession && this.userSession.id === mId) continue; 
+                        
+                        const log = this.punchLogs[checkDate][mId];
+                        if (log && log.captchas) {
+                            const pendings = log.captchas.filter(c => c.status === 'Pending');
+                            for (const cap of pendings) {
+                                if (this.diffInMins(cap.time, now) >= 2) {
+                                    cap.status = 'Missed';
+                                    updated = true;
+                                    
+                                    this.supabase.from('captcha_logs')
+                                        .update({ status: 'Missed' })
+                                        .match({ member_id: mId, log_date: checkDate, check_time: cap.time }).then();
+                                    
+                                    const breaks = log.breaks ||[];
+                                    if (breaks.length === 0 || breaks[breaks.length - 1].end !== '') {
+                                        breaks.push({ start: cap.time, end: '' });
+                                        this.supabase.from('break_logs').insert({
+                                            member_id: mId, log_date: checkDate, start_time: cap.time
+                                        }).then();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (updated) {
+                this.punchLogs = { ...this.punchLogs };
+            }
+        },
+
+        async startBreak(timeOverride = null) {
             if (!this.userSession) return;
             this.clearCaptchaTimers();
             const activeDate = this.getActiveShiftDate();
             const uId = this.userSession.id;
-            const startTime = this.getCurrentTimeIST();
+            
+            const startTime = (typeof timeOverride === 'string') ? timeOverride : this.getCurrentTimeIST();
 
             if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
-            if (!this.punchLogs[activeDate][uId]) this.punchLogs[activeDate][uId] = { in: '', out: '', breaks:[], captchas: [] };
+            if (!this.punchLogs[activeDate][uId]) this.punchLogs[activeDate][uId] = { in: '', out: '', breaks:[], captchas:[] };
             if (!this.punchLogs[activeDate][uId].breaks) this.punchLogs[activeDate][uId].breaks =[];
             
-            this.punchLogs[activeDate][uId].breaks.push({ start: startTime, end: '' });
+            const breaks = this.punchLogs[activeDate][uId].breaks;
+            
+            if (breaks.length > 0 && !breaks[breaks.length - 1].end) {
+                if (timeOverride) {
+                    breaks[breaks.length - 1].start = startTime;
+                    try {
+                        await this.supabase.from('break_logs').update({ start_time: startTime })
+                            .match({ member_id: uId, log_date: activeDate }).is('end_time', null);
+                    } catch(e) {}
+                }
+            } else {
+                breaks.push({ start: startTime, end: '' });
+                try {
+                    await this.supabase.from('break_logs').insert({
+                        member_id: uId, log_date: activeDate, start_time: startTime
+                    });
+                } catch(e) { console.error("Break start error", e); }
+            }
+            
             this.punchLogs = { ...this.punchLogs };
-            
-            try {
-                await this.supabase.from('break_logs').insert({
-                    member_id: uId, log_date: activeDate, start_time: startTime
-                });
-            } catch(e) { console.error("Break start error", e); }
-            
             this.breakPinInput = '';
-            this.showNote("Break Started & Tool Locked", "success");
+            
+            this.showNote(timeOverride ? "Penalty Break Retroactively Applied" : "Break Started & Tool Locked", "error");
             try { const elem = document.documentElement; if (elem.requestFullscreen) elem.requestFullscreen().catch(e=>e); } catch(e) {}
             setTimeout(() => { const el = document.getElementById('break-pin-input'); if(el) el.focus(); }, 100);
         },
@@ -1014,7 +1148,14 @@ window.attendanceApp = () => {
                 } catch(e) { console.error("Break end error", e); }
                 
                 this.showNote("Break Ended", "success");
-                this.scheduleNextCaptcha();
+                
+                if (this.userSession.captchaEnabled) {
+                    setTimeout(() => {
+                        this.triggerCaptcha();
+                    }, 500); 
+                } else {
+                    this.scheduleNextCaptcha();
+                }
             }
         },
 
@@ -1096,7 +1237,7 @@ window.attendanceApp = () => {
             Object.keys(this.punchLogs).forEach(dk => {
                 const log = this.punchLogs[dk]?.[id];
                 if (!log || !log.in) return;
-                const [dy, dm] = dk.split('-').map(Number);
+                const[dy, dm] = dk.split('-').map(Number);
                 if (dy === curY) {
                     ytd.breakMins += this.calculateTotalBreakMins(log.breaks);
                     ytd.activeMins += this.getActiveMinsForLog(log, dk);
@@ -1292,7 +1433,6 @@ window.attendanceApp = () => {
         
         initiateLogout() { if (!this.userSession) return; this.logoutTimePreview = this.getCurrentTimeIST(); this.showLogoutModal = true; },
         confirmLogoutPortal() {
-            // Kill captcha immediately — must be first, before any state writes
             this.clearCaptchaTimers();
 
             const activeDate = this.getActiveShiftDate(), uId = this.userSession.id;
@@ -1320,7 +1460,6 @@ window.attendanceApp = () => {
             if (found) {
                 this.tempUser = JSON.parse(JSON.stringify(found));
                 this.loginStep = !found.pin ? 'setup' : 'pin';
-                // Request notification permission now (user gesture = browser will actually prompt)
                 if ("Notification" in window && Notification.permission === "default") {
                     Notification.requestPermission().catch(() => {});
                 }
@@ -1339,37 +1478,50 @@ window.attendanceApp = () => {
 
                 await this.syncUserData(true);
 
-                // ==========================================
-                // 🚨 RETROACTIVE PENALTY TRAP 🚨
-                // ==========================================
-                const trapDate = this.getActiveShiftDate(); // <-- FIXED: Renamed to trapDate
+                const trapDate = this.getActiveShiftDate(); 
                 
-                // Look for any 'Pending' captchas in today's log
-                const todaysCaptchas = this.punchLogs[trapDate]?.[uid]?.captchas || [];
+                const todaysCaptchas = this.punchLogs[trapDate]?.[uid]?.captchas ||[];
                 const pendingCaptchas = todaysCaptchas.filter(c => c.status === 'Pending');
 
                 if (pendingCaptchas.length > 0) {
                     this.showNote("Window closed during verification. Penalty applied.", "error");
                     
-                    // Mark all abandoned captchas as 'Missed' in the Cloud
+                    let penaltyTime = pendingCaptchas[0].time;
+                    
                     for (const cap of pendingCaptchas) {
                         cap.status = 'Missed';
                         await this.supabase.from('captcha_logs')
                             .update({ status: 'Missed' })
                             .match({ member_id: uid, log_date: trapDate, check_time: cap.time });
+                        
+                        if (cap.time < penaltyTime) penaltyTime = cap.time;
                     }
                     this.punchLogs = { ...this.punchLogs }; 
                     
-                    // Force the user into a locked break state immediately
-                    this.startBreak();
+                    this.startBreak(penaltyTime);
                     
-                    // Reset login screen and abort the rest of the normal login flow
                     this.loginStep = 'id'; this.loginIdInput = ''; this.loginPinInput = ''; this.tempUser = null;
                     return; 
                 }
-                // ==========================================
-                // END TRAP
-                // ==========================================
+
+                const reopenLog = this.punchLogs[trapDate]?.[uid];
+                const alreadyOnBreak = reopenLog?.breaks?.length > 0 && !reopenLog.breaks[reopenLog.breaks.length - 1].end;
+                if (this.userSession.captchaEnabled && reopenLog?.in && !reopenLog?.out && !alreadyOnBreak) {
+                    const missedTime = this.getCurrentTimeIST();
+                    if (!this.punchLogs[trapDate][uid].captchas) this.punchLogs[trapDate][uid].captchas = [];
+                    this.punchLogs[trapDate][uid].captchas.push({ time: missedTime, status: 'Missed' });
+                    this.punchLogs = { ...this.punchLogs };
+                    try {
+                        await this.supabase.from('captcha_logs').insert({
+                            member_id: uid, log_date: trapDate, check_time: missedTime, status: 'Missed'
+                        });
+                    } catch(e) { console.error("Session-close captcha log error", e); }
+
+                    this.showNote("Session closed during active shift. Break initiated.", "error");
+                    this.startBreak(missedTime);
+                    this.loginStep = 'id'; this.loginIdInput = ''; this.loginPinInput = ''; this.tempUser = null;
+                    return;
+                }
 
                 const { data: excData } = await this.supabase
                     .from('member_exceptions_view')
@@ -1412,8 +1564,34 @@ window.attendanceApp = () => {
                     this.members[idx].pin = this.loginPinInput; 
                     this.upsertMemberCloud(this.members[idx]); 
                     this.userSession = JSON.parse(JSON.stringify(this.members[idx])); 
-		    this.setupUserRealtime();
-		    await this.syncUserData(true); 
+                    this.setupUserRealtime();
+                    await this.syncUserData(true); 
+
+                    const setupTrapDate = this.getActiveShiftDate();
+                    const setupUid = this.userSession.id;
+                    const setupTodaysCaptchas = this.punchLogs[setupTrapDate]?.[setupUid]?.captchas ||[];
+                    const setupPendingCaptchas = setupTodaysCaptchas.filter(c => c.status === 'Pending');
+
+                    if (setupPendingCaptchas.length > 0) {
+                        this.showNote("Window closed during verification. Penalty applied.", "error");
+                        
+                        let penaltyTime = setupPendingCaptchas[0].time;
+                        
+                        for (const cap of setupPendingCaptchas) {
+                            cap.status = 'Missed';
+                            await this.supabase.from('captcha_logs')
+                                .update({ status: 'Missed' })
+                                .match({ member_id: setupUid, log_date: setupTrapDate, check_time: cap.time });
+                                
+                            if (cap.time < penaltyTime) penaltyTime = cap.time;
+                        }
+                        this.punchLogs = { ...this.punchLogs };
+                        
+                        this.startBreak(penaltyTime);
+                        
+                        this.loginStep = 'id'; this.loginIdInput = ''; this.loginPinInput = ''; this.tempUser = null;
+                        return;
+                    }
 
                     const { data: excData } = await this.supabase
                         .from('member_exceptions_view')
@@ -1497,7 +1675,6 @@ window.attendanceApp = () => {
             this.members.sort((a, b) => a.empId.localeCompare(b.empId, undefined, { numeric: true, sensitivity: 'base' })); 
 
             this.upsertMemberCloud(cleanMember); 
-            //this.processAutoHolidays(); 
             this.resetMemberForm();
         },
         
@@ -1538,7 +1715,7 @@ window.attendanceApp = () => {
                 if (scrollArea) scrollArea.classList.add('max-h-[600px]', 'overflow-x-auto'); this.showNote("PDF Downloaded", "success");
             }); 
         },
-async fetchReportDataRange() {
+        async fetchReportDataRange() {
             if (!this.summaryStartDate || !this.summaryEndDate) return this.showNote("Please select both dates", "error");
             if (this.summaryStartDate > this.summaryEndDate) return this.showNote("Start date must be before end date", "error");
 
@@ -1546,17 +1723,15 @@ async fetchReportDataRange() {
             this.showNote("Fetching historical report data...", "success");
 
             try {
-                // Fetch bulk data for the exact range
                 let attQuery = this.supabase.from('attendance').select('*').gte('date', this.summaryStartDate).lte('date', this.summaryEndDate);
                 let punchQuery = this.supabase.from('punch_logs').select('*').gte('date', this.summaryStartDate).lte('date', this.summaryEndDate);
                 let breakQuery = this.supabase.from('break_logs').select('*').gte('log_date', this.summaryStartDate).lte('log_date', this.summaryEndDate);
                 let capQuery = this.supabase.from('captcha_logs').select('*').gte('log_date', this.summaryStartDate).lte('log_date', this.summaryEndDate);
 
-                const [{ data: aData }, { data: pData }, { data: bData }, { data: capData }] = await Promise.all([
+                const[{ data: aData }, { data: pData }, { data: bData }, { data: capData }] = await Promise.all([
                     attQuery, punchQuery, breakQuery, capQuery
                 ]);
 
-                // Merge Attendance
                 if (aData) {
                     aData.forEach(r => {
                         if (!this.attendanceData[r.date]) this.attendanceData[r.date] = {};
@@ -1565,12 +1740,11 @@ async fetchReportDataRange() {
                     this.attendanceData = { ...this.attendanceData };
                 }
 
-                // Merge Punches
                 if (pData) {
                     pData.forEach(r => {
                         if (!this.punchLogs[r.date]) this.punchLogs[r.date] = {};
                         if (!this.punchLogs[r.date][r.member_id]) {
-                            this.punchLogs[r.date][r.member_id] = { in: r.in_time || '', out: r.out_time || '', breaks: [], captchas: [] };
+                            this.punchLogs[r.date][r.member_id] = { in: r.in_time || '', out: r.out_time || '', breaks: [], captchas:[] };
                         } else {
                             this.punchLogs[r.date][r.member_id].in = r.in_time || '';
                             this.punchLogs[r.date][r.member_id].out = r.out_time || '';
@@ -1578,11 +1752,10 @@ async fetchReportDataRange() {
                     });
                 }
 
-                // Merge Breaks
                 if (bData) {
                     bData.forEach(b => {
                         if (!this.punchLogs[b.log_date]) this.punchLogs[b.log_date] = {};
-                        if (!this.punchLogs[b.log_date][b.member_id]) this.punchLogs[b.log_date][b.member_id] = { in: '', out: '', breaks: [], captchas: [] };
+                        if (!this.punchLogs[b.log_date][b.member_id]) this.punchLogs[b.log_date][b.member_id] = { in: '', out: '', breaks: [], captchas:[] };
                         
                         const breaks = this.punchLogs[b.log_date][b.member_id].breaks;
                         if (!breaks.find(existing => existing.start === b.start_time)) {
@@ -1591,11 +1764,11 @@ async fetchReportDataRange() {
                     });
                 }
 
-                // Merge Captchas
                 if (capData) {
                     capData.forEach(c => {
                         if (!this.punchLogs[c.log_date]) this.punchLogs[c.log_date] = {};
-                        if (!this.punchLogs[c.log_date][c.member_id]) this.punchLogs[c.log_date][c.member_id] = { in: '', out: '', breaks: [], captchas: [] };
+                        if (!this.punchLogs[c.log_date][c.member_id]) this.punchLogs[c.log_date][c.member_id] = { in: '', out: '', breaks: [], captchas:[] };
+                        if (!this.punchLogs[c.log_date][c.member_id].captchas) this.punchLogs[c.log_date][c.member_id].captchas =[];
                         
                         const captchas = this.punchLogs[c.log_date][c.member_id].captchas;
                         if (!captchas.find(existing => existing.time === c.check_time)) {
@@ -1606,7 +1779,6 @@ async fetchReportDataRange() {
 
                 this.punchLogs = { ...this.punchLogs };
                 
-                // Adjust frontend memory scope if we fetched older data
                 if (this.summaryStartDate < this.scopeStartStr) {
                     this.scopeStartStr = this.summaryStartDate;
                 }
@@ -1683,7 +1855,7 @@ async fetchReportDataRange() {
             XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(personnelRows), "Personnel_Master"); 
 
             // SHEET 2: Attendance Registry
-            const attendanceRows = []; 
+            const attendanceRows =[]; 
             Object.keys(this.attendanceData).sort().forEach(date => {
                 Object.keys(this.attendanceData[date]).forEach(empId => { 
                     if (this.attendanceData[date][empId]) {
@@ -1699,11 +1871,11 @@ async fetchReportDataRange() {
             XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(attendanceRows), "Attendance_Registry");
 
             // SHEET 3: Detailed Punch & Break Logs
-            const punchRows = []; 
+            const punchRows =[]; 
             Object.keys(this.punchLogs).sort().forEach(date => {
                 Object.keys(this.punchLogs[date]).forEach(empId => { 
                     const log = this.punchLogs[date][empId]; 
-                    const captchaFails = (log.captchas || []).filter(c => c.status !== 'Passed').length;
+                    const captchaFails = (log.captchas ||[]).filter(c => c.status !== 'Passed').length;
                     
                     punchRows.push({ 
                         'Date': date, 
@@ -1752,7 +1924,7 @@ async fetchReportDataRange() {
             this.showNote(this.autoExportEnabled ? `Auto-Export set for ${this.autoExportTime} IST` : "Auto-Export Disabled", "success");
         },
 
-         openNewMemberForm() { this.isAddingMember = true; this.isEditing = false; this.newMember = { empId: '', firstName: '', lastName: '', dept: 'General', role: 'Staff', shift: 'General Shift', allowedPL: 0, allowedSL: 0, allowedPerm: 0, doj: '', doe: '', dob: '', pin: '', captchaEnabled: false }; },
+        openNewMemberForm() { this.isAddingMember = true; this.isEditing = false; this.newMember = { empId: '', firstName: '', lastName: '', dept: 'General', role: 'Staff', shift: 'General Shift', allowedPL: 0, allowedSL: 0, allowedPerm: 0, doj: '', doe: '', dob: '', pin: '', captchaEnabled: false }; },
         removeMember(id) { this.memberToDelete = id; this.confirmWipe('member'); },
         resetUserPin(id) {
             const idx = this.members.findIndex(m => m.id === id);
@@ -1971,7 +2143,7 @@ async fetchReportDataRange() {
 
         <div class="flex-1 overflow-y-auto px-4 md:px-10 pb-16 custom-scrollbar">
             
-            <div x-show="view === 'portal'" class="max-w-7xl mx-auto py-6 space-y-8">
+            <div x-show="view === 'portal'" class="w-full py-6 space-y-8">
 
                 <div x-show="!userSession" class="max-w-xl mx-auto bg-white p-8 rounded-[2rem] shadow-xl text-center space-y-8 animate-in slide-in-from-bottom">
                     <div class="w-20 h-20 bg-[#0f4c81] text-white rounded-2xl flex items-center justify-center mx-auto shadow-2xl"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
@@ -2065,59 +2237,89 @@ async fetchReportDataRange() {
                         </div>
                     </div>
 
-                    <div class="flex flex-col xl:flex-row gap-6 w-full">
+                    <div class="flex flex-col gap-6 w-full">
                         
-                        <div class="flex-1 bg-white p-6 rounded-[2rem] border border-zinc-100 shadow-sm flex flex-col justify-between portal-card relative">
-                            <div class="flex flex-col md:flex-row md:items-center justify-between gap-6">
-                                <div>
-                                    <h4 class="text-xl font-black uppercase tracking-tight text-zinc-950">Active Shift Record</h4>
-                                    <div class="flex flex-wrap items-center gap-2 mt-2">
-                                        <span class="text-[9px] font-black text-indigo-600 bg-indigo-50 px-2 py-1.5 rounded-lg uppercase tracking-widest border border-indigo-100 mr-1" x-text="formatDate(getActiveShiftDate())"></span>
-                                        <div class="px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-[10px] font-black uppercase border border-emerald-100">
-                                            IN: <span x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in || '--:--'"></span>
-                                        </div>
-                                        <div class="px-3 py-1.5 bg-rose-50 text-rose-700 rounded-lg text-[10px] font-black uppercase border border-rose-100">
-                                            OUT: <span x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out || '--:--'"></span>
-                                        </div>
-                                        <div class="px-3 py-1.5 bg-amber-50 text-amber-700 rounded-lg text-[10px] font-black uppercase border border-amber-100 flex items-center gap-1.5" x-show="calculateTotalBreakMins(punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks) > 0 || userOnBreak">
-                                            <span x-show="userOnBreak" class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                                            BREAK: <span x-text="formatBreakDisplay(calculateTotalBreakMins(punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks))"></span>
-                                        </div>
+<!-- COMPACT ACTIVE SHIFT RECORD -->
+                        <div class="flex-1 bg-white rounded-[1.5rem] border border-zinc-100 shadow-md flex flex-col justify-between portal-card relative overflow-hidden w-full">
+                            <div class="p-5 flex flex-col gap-4">
+                                <!-- Header Row -->
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-3">
+                                        <span class="relative flex h-2.5 w-2.5 shrink-0">
+                                            <span x-show="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in && !punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out && !userOnBreak" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                            <span class="relative inline-flex rounded-full h-2.5 w-2.5" 
+                                                  :class="userOnBreak ? 'bg-amber-500' : (punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out ? 'bg-zinc-300' : 'bg-emerald-500')"></span>
+                                        </span>
+                                        <h2 class="text-xl font-black tracking-tight uppercase text-zinc-950" x-text="formatDate(getActiveShiftDate())"></h2>
+                                        <span class="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400 border-l border-zinc-200 pl-3">Active Shift</span>
+                                    </div>
+                                    
+                                    <div x-show="userOnBreak" class="px-2.5 py-1 bg-amber-50 text-amber-600 rounded-lg text-[9px] font-black uppercase tracking-widest border border-amber-200 shadow-sm flex items-center gap-1.5 animate-pulse">
+                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                        On Break
                                     </div>
                                 </div>
-                                
-                                <div class="flex flex-wrap items-center gap-2 shrink-0 bg-zinc-50 p-2 rounded-2xl border border-zinc-100">
-                                    
-                                    <template x-if="!userOnBreak && punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in && !punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out">
-                                        <button @click="startBreak()" class="px-5 py-2.5 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border border-[#0f4c81]">Take Break</button>
-                                    </template>
-                                    
-                                    <template x-if="userOnBreak">
-    <button @click="endBreak()" class="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all border border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.8)] animate-pulse">End Break</button>
-</template>
-                                    
-                                    <button @click="initiateLogout()" class="px-5 py-2.5 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border border-[#0f4c81]">Day Log Out</button>
-                                    <button @click="showLeaveModal = true" class="px-5 py-2.5 bg-[#0f4c81] hover:bg-[#0a3861] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm border border-[#0f4c81]">Time-Off</button>
+
+                                <!-- Timings & Actions Row -->
+                                <div class="flex flex-col md:flex-row gap-3 items-stretch">
+                                    <!-- Timings Strip -->
+                                    <div class="flex bg-zinc-50 rounded-xl border border-zinc-100 p-1 flex-1 shadow-inner">
+                                        <div class="flex-1 flex flex-col items-center justify-center py-1.5 border-r border-zinc-100">
+                                            <span class="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-0.5">In</span>
+                                            <span class="text-sm font-black text-emerald-600" x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in || '--:--'"></span>
+                                        </div>
+                                        <div class="flex-1 flex flex-col items-center justify-center py-1.5 border-r border-zinc-100">
+                                            <span class="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-0.5">Out</span>
+                                            <span class="text-sm font-black text-rose-600" x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out || '--:--'"></span>
+                                        </div>
+                                        <div class="flex-1 flex flex-col items-center justify-center py-1.5 transition-all" :class="userOnBreak ? 'bg-amber-100/50 rounded-lg' : ''">
+                                            <span class="text-[8px] font-black uppercase tracking-widest text-zinc-400 mb-0.5">Break</span>
+                                            <span class="text-sm font-black" :class="userOnBreak ? 'text-amber-600' : 'text-zinc-700'" x-text="formatBreakDisplay(calculateTotalBreakMins(punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks))"></span>
+                                        </div>
+                                    </div>
+
+                                    <!-- Action Buttons -->
+                                    <div class="flex gap-2 shrink-0">
+                                        <template x-if="!userOnBreak && punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in && !punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out">
+                                            <button @click="startBreak()" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm active:scale-95 flex items-center justify-center gap-1.5">
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+                                                Break
+                                            </button>
+                                        </template>
+                                        
+                                        <template x-if="userOnBreak">
+                                            <button @click="endBreak()" class="px-4 py-2 bg-[#f26522] hover:bg-[#d9561c] text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-[0_0_10px_rgba(242,101,34,0.4)] animate-pulse active:scale-95 flex items-center justify-center gap-1.5">
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                                                Resume
+                                            </button>
+                                        </template>
+                                        
+                                        <button @click="initiateLogout()" class="px-4 py-2 bg-zinc-900 hover:bg-black text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all shadow-sm active:scale-95 flex items-center justify-center gap-1.5">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                                            Out
+                                        </button>
+                                        
+                                        <button @click="showLeaveModal = true" class="px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded-xl font-black transition-all shadow-sm active:scale-95 flex items-center justify-center" title="Request Time-Off">
+                                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                             
-                            <div class="mt-6 pt-5 border-t border-zinc-100 flex items-center justify-between">
-                                <div class="flex items-center gap-4">
-                                    <div class="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-[0.8rem] flex items-center justify-center">
-                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                                    </div>
-                                    <div>
-                                        <h5 class="text-sm font-black uppercase text-zinc-950">Active Verification</h5>
-                                        <p class="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">Random Captcha Check (20-35m)</p>
-                                    </div>
+                            <!-- Thin Verification Footer -->
+                            <div class="bg-indigo-50/50 border-t border-indigo-100/50 px-5 py-2.5 flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <svg width="14" height="14" class="text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                                    <span class="text-[9px] font-black uppercase tracking-widest text-indigo-900">Verification <span class="hidden sm:inline text-indigo-400 border-l border-indigo-200 ml-1.5 pl-1.5">Random Check (20-35m)</span></span>
                                 </div>
-                                <div :class="userSession?.captchaEnabled ? 'bg-[#f26522]' : 'bg-zinc-200'" class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors shadow-inner opacity-80 cursor-not-allowed" title="Security settings are controlled by Administration">
-    <span :class="userSession?.captchaEnabled ? 'translate-x-6' : 'translate-x-1'" class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm"></span>
-</div>
+                                <div :class="userSession?.captchaEnabled ? 'bg-[#f26522]' : 'bg-zinc-300'" class="relative inline-flex h-4 w-7 items-center rounded-full transition-all cursor-not-allowed opacity-90" title="Security settings are controlled by Administration">
+                                    <span :class="userSession?.captchaEnabled ? 'translate-x-3.5' : 'translate-x-0.5'" class="inline-block h-2.5 w-2.5 transform rounded-full bg-white transition-transform shadow-sm"></span>
+                                </div>
                             </div>
                         </div>
+                        <!-- END COMPACT ACTIVE SHIFT RECORD -->
 
-                        <div x-show="isManagerOrLead" class="flex-1 bg-white p-6 rounded-[2rem] border border-zinc-100 shadow-sm flex flex-col justify-center portal-card max-w-full xl:max-w-[45%]">
+                        <div x-show="isManagerOrLead" class="flex-1 bg-white p-6 rounded-[2rem] border border-zinc-100 shadow-sm flex flex-col justify-center portal-card w-full">
                             <div class="flex items-center justify-between mb-4">
                                 <h4 class="text-xl font-black uppercase tracking-tight text-zinc-950">Team Break Status</h4>
                                 <span class="px-2 py-1 bg-amber-100 text-amber-700 rounded-md text-[9px] font-black uppercase border border-amber-200" x-text="activeTeamOnBreak.length + ' Away'"></span>
@@ -2400,9 +2602,9 @@ async fetchReportDataRange() {
                                     <div class="absolute -right-10 -bottom-10 w-32 h-32 bg-white/5 rounded-full blur-2xl"></div>
                                 </div>
                                 <div class="bg-white p-8 rounded-[2rem] border border-zinc-100 shadow-sm flex flex-col justify-between h-full portal-card">
-    <p class="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-500 mb-4">Confirmed Presents (Incl. WFH & Perms)</p>
-    <h3 class="text-6xl font-black tracking-tighter text-zinc-950" x-text="(dashboardStats.totals['p'] || 0) + (dashboardStats.totals['wfh'] || 0) + (dashboardStats.totals['1p'] || 0) + (dashboardStats.totals['2p'] || 0)"></h3>
-</div>
+                                    <p class="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-500 mb-4">Confirmed Presents (Incl. WFH & Perms)</p>
+                                    <h3 class="text-6xl font-black tracking-tighter text-zinc-950" x-text="(dashboardStats.totals['p'] || 0) + (dashboardStats.totals['wfh'] || 0) + (dashboardStats.totals['1p'] || 0) + (dashboardStats.totals['2p'] || 0)"></h3>
+                                </div>
                                 <div class="bg-white p-8 rounded-[2rem] border border-zinc-100 shadow-sm flex flex-col justify-between h-full portal-card">
                                     <p class="text-[10px] font-black uppercase tracking-[0.2em] text-rose-500 mb-4">Confirmed Absents</p>
                                     <h3 class="text-6xl font-black tracking-tighter text-zinc-950" x-text="dashboardStats.totals['a'] || 0"></h3>
@@ -2498,9 +2700,9 @@ async fetchReportDataRange() {
                                                 </div>
                                                 
                                                 <div @click="adminToggleBreak(m.id)" 
-     class="flex-1 border rounded-2xl p-2 flex flex-col items-center justify-center transition-all cursor-pointer hover:scale-105 active:scale-95"
-     :class="isMemberOnBreak(m.id, currentDate) ? 'bg-amber-500 border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.6)] text-white' : 'bg-amber-50 border-amber-200 hover:bg-amber-100'"
-     title="Admin Override: Click to Start/Stop Break">
+                                                     class="flex-1 border rounded-2xl p-2 flex flex-col items-center justify-center transition-all cursor-pointer hover:scale-105 active:scale-95"
+                                                     :class="isMemberOnBreak(m.id, currentDate) ? 'bg-amber-500 border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.6)] text-white' : 'bg-amber-50 border-amber-200 hover:bg-amber-100'"
+                                                     title="Admin Override: Click to Start/Stop Break">
                                                     <span class="text-[8px] font-black uppercase tracking-[0.2em] mb-1 flex items-center" 
                                                           :class="isMemberOnBreak(m.id, currentDate) ? 'text-amber-100' : 'text-amber-600'">
                                                         <span x-show="isMemberOnBreak(m.id, currentDate)" class="inline-block w-1.5 h-1.5 bg-white rounded-full animate-pulse mr-1 mb-[1px]"></span>
@@ -2540,16 +2742,21 @@ async fetchReportDataRange() {
                                                 </template>
                                             </div>
                                             
-                                            <div class="shrink-0 w-full lg:w-auto mt-4 lg:mt-0 flex justify-end lg:border-l border-zinc-100 lg:pl-4">
+                                            <div class="shrink-0 w-full lg:w-auto mt-4 lg:mt-0 flex flex-col gap-2 justify-end lg:justify-center lg:border-l border-zinc-100 lg:pl-4">
                                                 <button @click="toggleEditLog(m.id)"
-                                                        class="px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm w-full lg:w-auto border"
+                                                        class="px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm w-full border"
                                                         :class="editingLogId === m.id ? 'bg-[#f26522] text-white border-[#d9561c] shadow-md' : 'bg-white text-zinc-500 border-zinc-200 hover:bg-zinc-50 hover:text-zinc-900'">
                                                     <span x-text="editingLogId === m.id ? 'Save' : 'Action'"></span>
+                                                </button>
+                                                <button x-show="(isManagerOrLead || isAdminAuthenticated) && currentDate === initialToday" 
+                                                        @click="forceCaptcha(m.id)" 
+                                                        class="px-6 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all shadow-sm w-full border bg-indigo-50 text-indigo-600 border-indigo-200 hover:bg-indigo-100 whitespace-nowrap"
+                                                        title="Trigger a verification check immediately">
+                                                    Force Check
                                                 </button>
                                             </div>
                                         </div>
 
-                                        <!-- UPDATE 2: Refactored Collapsible Break Timeline -->
                                         <div class="w-full pt-4 border-t border-zinc-100" x-show="punchLogs[currentDate]?.[m.id]?.breaks && punchLogs[currentDate]?.[m.id]?.breaks.length > 0" x-data="{ showBreaks: false }">
                                             <div class="bg-amber-50/40 rounded-[1.25rem] border border-amber-200/50 w-full overflow-hidden flex flex-col relative transition-all duration-300">
                                                 
@@ -2557,7 +2764,7 @@ async fetchReportDataRange() {
                                                     <span class="text-[10px] font-black uppercase text-amber-800 tracking-widest flex items-center gap-2">
                                                         <span class="w-2 h-2 rounded-full bg-amber-500 shadow-sm"></span>
                                                         Break Activity Timeline
-                                                        <svg :class="showBreaks ? 'rotate-180' : ''" class="w-4 h-4 ml-1 transition-transform duration-300 text-amber-600" fillnone" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path></svg>
+                                                        <svg :class="showBreaks ? 'rotate-180' : ''" class="w-4 h-4 ml-1 transition-transform duration-300 text-amber-600" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path></svg>
                                                     </span>
                                                     <span class="text-[10px] font-black uppercase text-amber-700 bg-white px-3 py-1 rounded-lg shadow-sm border border-amber-200" x-text="calculateTotalBreakMins(punchLogs[currentDate]?.[m.id]?.breaks) + ' Mins Total'"></span>
                                                 </div>
@@ -2589,7 +2796,6 @@ async fetchReportDataRange() {
                                             </div>
                                         </div>
 
-                                        <!-- CAPTCHA VERIFICATION TIMELINE -->
                                         <div class="w-full pt-2" x-show="punchLogs[currentDate]?.[m.id]?.captchas && punchLogs[currentDate]?.[m.id]?.captchas.length > 0" x-data="{ showCaptchas: false }">
                                             <div class="bg-indigo-50/40 rounded-[1.25rem] border border-indigo-200/50 w-full overflow-hidden flex flex-col relative transition-all duration-300">
                                                 
@@ -2611,11 +2817,11 @@ async fetchReportDataRange() {
                                                         
                                                         <template x-for="(cap, cIdx) in punchLogs[currentDate]?.[m.id]?.captchas" :key="cIdx">
                                                             <div class="relative z-10 flex flex-col bg-white border-2 rounded-[1rem] shadow-sm min-w-[140px] transition-transform hover:-translate-y-1 hover:shadow-lg"
-                                                                :class="cap.status === 'Passed' ? 'border-emerald-200' : 'border-rose-200'">
+                                                                :class="cap.status === 'Passed' ? 'border-emerald-200' : (cap.status === 'Pending' ? 'border-amber-300' : 'border-rose-200')">
                                                                 <div class="px-4 py-2 border-b flex items-center justify-between rounded-t-[14px]"
-                                                                    :class="cap.status === 'Passed' ? 'border-emerald-100 bg-emerald-50/50' : 'border-rose-100 bg-rose-50/50'">
-                                                                    <span class="text-[9px] font-black uppercase tracking-widest" :class="cap.status === 'Passed' ? 'text-emerald-600' : 'text-rose-600'" x-text="'Check ' + (cIdx + 1)"></span>
-                                                                    <span class="text-[9px] font-black px-2 py-0.5 rounded-md" :class="cap.status === 'Passed' ? 'text-emerald-700 bg-emerald-100' : 'text-rose-700 bg-rose-100'" x-text="cap.status"></span>
+                                                                    :class="cap.status === 'Passed' ? 'border-emerald-100 bg-emerald-50/50' : (cap.status === 'Pending' ? 'border-amber-200 bg-amber-50/50' : 'border-rose-100 bg-rose-50/50')">
+                                                                    <span class="text-[9px] font-black uppercase tracking-widest" :class="cap.status === 'Passed' ? 'text-emerald-600' : (cap.status === 'Pending' ? 'text-amber-600' : 'text-rose-600')" x-text="'Check ' + (cIdx + 1)"></span>
+                                                                    <span class="text-[9px] font-black px-2 py-0.5 rounded-md" :class="cap.status === 'Passed' ? 'text-emerald-700 bg-emerald-100' : (cap.status === 'Pending' ? 'text-amber-700 bg-amber-100 animate-pulse' : 'text-rose-700 bg-rose-100')" x-text="cap.status"></span>
                                                                 </div>
                                                                 <div class="px-4 py-3 flex items-center justify-center gap-3 text-xs font-bold text-zinc-700">
                                                                     <span x-text="cap.time"></span>
