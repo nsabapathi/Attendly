@@ -1149,16 +1149,10 @@ window.attendanceApp = () => {
                 
                 this.showNote("Break Ended", "success");
                 
-                if (this.userSession.captchaEnabled) {
-                    setTimeout(() => {
-                        this.triggerCaptcha();
-                    }, 500); 
-                } else {
-                    this.scheduleNextCaptcha();
-                }
+                // Restart the normal 20-35 minute random timer
+                this.scheduleNextCaptcha();
             }
         },
-
         diffInMins(t1, t2) {
             if(!t1 || !t2) return 0;
             const p = (str) => {
