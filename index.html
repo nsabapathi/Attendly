@@ -2189,33 +2189,106 @@ async handlePinSetup() {
             
             <div x-show="view === 'portal'" class="w-full py-6 space-y-8">
 
-                <div x-show="!userSession" class="max-w-xl mx-auto bg-white p-8 rounded-[2rem] shadow-xl text-center space-y-8 animate-in slide-in-from-bottom">
-                    <div class="w-20 h-20 bg-[#0f4c81] text-white rounded-2xl flex items-center justify-center mx-auto shadow-2xl"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-                    <div x-show="loginStep === 'id'" class="space-y-6">
-                        <h3 class="text-4xl font-black tracking-tighter uppercase">Identity Portal</h3>
-                        <div class="space-y-4">
-                            <input type="text" id="login-id-input" x-model="loginIdInput" @keyup.enter="handleIdEntry()" placeholder="EMPLOYEE ID" class="w-full px-6 py-5 bg-zinc-50 border border-zinc-200 rounded-[1.5rem] text-center font-black text-2xl uppercase outline-none focus:bg-white shadow-inner">
-                            <button @click="handleIdEntry()" class="w-full py-5 bg-[#f26522] hover:bg-[#d9561c] text-white rounded-[1.5rem] font-black text-lg shadow-2xl transition-transform active:scale-95">Verify Identity</button>
-                        </div>
-                    </div>
-                    <div x-show="loginStep === 'pin'" class="space-y-6">
-                        <h3 class="text-3xl font-black tracking-tighter uppercase">Security Check</h3>
-                        <p class="text-zinc-400 font-bold uppercase text-xs tracking-widest" x-text="'Verified: ' + tempUser?.name"></p>
-                        <div class="space-y-4">
-                            <input type="password" id="login-pin-input" x-model="loginPinInput" @keyup.enter="handlePinVerification()" @input="if(loginPinInput.length === 6) handlePinVerification()" maxlength="6" placeholder="••••••" class="w-full px-6 py-5 bg-zinc-50 border border-zinc-200 rounded-[1.5rem] text-center font-black text-4xl tracking-[0.5em] outline-none shadow-inner">
-                            <button @click="handlePinVerification()" class="w-full py-5 bg-[#f26522] hover:bg-[#d9561c] text-white rounded-[1.5rem] font-black text-lg shadow-2xl transition-transform active:scale-95">Confirm & Punch In</button>
-                            <button @click="cancelLogin()" class="text-[10px] font-black text-zinc-400 uppercase tracking-widest pt-4">Back</button>
-                        </div>
-                    </div>
-                    <div x-show="loginStep === 'setup'" class="space-y-6">
-                        <h3 class="text-3xl font-black tracking-tighter text-[#f26522] uppercase">Set Access PIN</h3>
-                        <p class="text-zinc-400 font-bold uppercase text-xs tracking-widest" x-text="'Hello ' + tempUser?.firstName + ', please set a 6-digit Private PIN'"></p>
-                        <div class="space-y-4">
-                            <input type="password" id="setup-pin-input" x-model="loginPinInput" @keyup.enter="handlePinSetup()" @input="if(loginPinInput.length === 6) handlePinSetup()" maxlength="6" placeholder="000000" class="w-full px-6 py-5 bg-orange-50 border border-orange-200 rounded-[1.5rem] text-center font-black text-4xl tracking-[0.5em] outline-none shadow-inner">
-                            <button @click="handlePinSetup()" class="w-full py-5 bg-[#f26522] hover:bg-[#d9561c] text-white rounded-[1.5rem] font-black text-lg shadow-2xl">Confirm Registration</button>
-                        </div>
-                    </div>
+                <div x-show="!userSession" class="w-full max-w-md mx-auto relative group animate-in zoom-in-95 duration-500 mt-10 md:mt-20">
+    
+    <div class="absolute -inset-1 bg-gradient-to-r from-[#0f4c81]/20 via-transparent to-[#f26522]/20 rounded-[2.5rem] blur-xl opacity-70 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 pointer-events-none"></div>
+
+    <div class="relative bg-white p-8 md:p-10 rounded-[2.5rem] shadow-2xl border border-zinc-100 text-center space-y-8 overflow-hidden">
+        
+        <div class="absolute top-0 right-0 w-32 h-32 bg-[#0f4c81]/5 rounded-full blur-3xl pointer-events-none"></div>
+
+        <div class="relative inline-flex items-center justify-center shrink-0">
+            <div class="absolute inset-0 bg-[#0f4c81]/20 rounded-full blur-xl animate-pulse"></div>
+            <div class="w-20 h-20 bg-gradient-to-b from-[#0f4c81] to-[#0a3861] text-white rounded-[1.5rem] flex items-center justify-center shadow-[0_10px_30px_-10px_rgba(15,76,129,0.5)] border border-[#0f4c81]/50 relative z-10">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                    <circle cx="12" cy="7" r="4"/>
+                </svg>
+            </div>
+        </div>
+
+        <div x-show="loginStep === 'id'" 
+             x-transition:enter="transition ease-out duration-300 delay-100" 
+             x-transition:enter-start="opacity-0 translate-y-4" 
+             x-transition:enter-end="opacity-100 translate-y-0" 
+             class="space-y-8 relative z-10">
+            
+            <div class="space-y-2">
+                <h3 class="text-3xl font-black tracking-tighter text-zinc-900 uppercase">Identity Portal</h3>
+                <p class="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">Enter Your Employee Credential</p>
+            </div>
+            
+            <div class="space-y-4">
+                <input type="text" id="login-id-input" x-model="loginIdInput" @keyup.enter="handleIdEntry()" placeholder="EMPLOYEE ID" 
+                       class="w-full px-6 py-5 bg-zinc-50 border-2 border-zinc-200/80 rounded-[1.25rem] text-center font-black text-xl uppercase tracking-widest outline-none transition-all focus:bg-white focus:border-[#f26522] focus:ring-4 focus:ring-[#f26522]/10 shadow-inner placeholder:text-zinc-300 text-zinc-900">
+                
+                <button @click="handleIdEntry()" 
+                        class="w-full py-5 bg-[#f26522] hover:bg-[#de5a1d] text-white rounded-[1.25rem] font-black text-[11px] uppercase tracking-widest shadow-[0_8px_20px_-8px_rgba(242,101,34,0.6)] hover:shadow-[0_12px_24px_-8px_rgba(242,101,34,0.7)] hover:-translate-y-0.5 transition-all active:scale-[0.98]">
+                    Verify Identity
+                </button>
+            </div>
+        </div>
+
+        <div x-show="loginStep === 'pin'" 
+             x-transition:enter="transition ease-out duration-300 delay-100" 
+             x-transition:enter-start="opacity-0 translate-y-4" 
+             x-transition:enter-end="opacity-100 translate-y-0" 
+             x-cloak 
+             class="space-y-8 relative z-10">
+            
+            <div class="space-y-3">
+                <h3 class="text-3xl font-black tracking-tighter text-zinc-900 uppercase">Security Check</h3>
+                <div class="inline-flex items-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-100 rounded-full">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span class="text-[9px] font-black uppercase tracking-[0.15em] text-emerald-700" x-text="tempUser?.name"></span>
                 </div>
+            </div>
+            
+            <div class="space-y-4">
+                <input type="password" id="login-pin-input" x-model="loginPinInput" @keyup.enter="handlePinVerification()" @input="if(loginPinInput.length === 6) handlePinVerification()" maxlength="6" placeholder="••••••" 
+                       class="w-full px-6 py-5 bg-zinc-50 border-2 border-zinc-200/80 rounded-[1.25rem] text-center font-black text-4xl tracking-[0.5em] outline-none transition-all focus:bg-white focus:border-[#f26522] focus:ring-4 focus:ring-[#f26522]/10 shadow-inner placeholder:text-zinc-300 text-zinc-900">
+                
+                <button @click="handlePinVerification()" 
+                        class="w-full py-5 bg-[#f26522] hover:bg-[#de5a1d] text-white rounded-[1.25rem] font-black text-[11px] uppercase tracking-widest shadow-[0_8px_20px_-8px_rgba(242,101,34,0.6)] hover:shadow-[0_12px_24px_-8px_rgba(242,101,34,0.7)] hover:-translate-y-0.5 transition-all active:scale-[0.98]">
+                    Confirm & Punch In
+                </button>
+                
+                <button @click="cancelLogin()" class="pt-4 text-[10px] font-black text-zinc-400 hover:text-zinc-600 uppercase tracking-[0.2em] transition-colors flex items-center justify-center gap-1.5 mx-auto">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                    Back to Identity
+                </button>
+            </div>
+        </div>
+
+        <div x-show="loginStep === 'setup'" 
+             x-transition:enter="transition ease-out duration-300 delay-100" 
+             x-transition:enter-start="opacity-0 translate-y-4" 
+             x-transition:enter-end="opacity-100 translate-y-0" 
+             x-cloak 
+             class="space-y-8 relative z-10">
+            
+            <div class="space-y-2">
+                <h3 class="text-3xl font-black tracking-tighter text-[#f26522] uppercase">Set Access PIN</h3>
+                <p class="text-[10px] font-black uppercase tracking-[0.15em] text-zinc-500 leading-relaxed px-4" x-text="'Hello ' + tempUser?.firstName + ', please set a 6-digit Private PIN.'"></p>
+            </div>
+            
+            <div class="space-y-4">
+                <input type="password" id="setup-pin-input" x-model="loginPinInput" @keyup.enter="handlePinSetup()" @input="if(loginPinInput.length === 6) handlePinSetup()" maxlength="6" placeholder="000000" 
+                       class="w-full px-6 py-5 bg-orange-50/50 border-2 border-orange-200/50 rounded-[1.25rem] text-center font-black text-4xl tracking-[0.5em] outline-none transition-all focus:bg-white focus:border-[#f26522] focus:ring-4 focus:ring-[#f26522]/10 shadow-inner placeholder:text-orange-200 text-orange-950">
+                
+                <button @click="handlePinSetup()" 
+                        class="w-full py-5 bg-zinc-900 hover:bg-black text-white rounded-[1.25rem] font-black text-[11px] uppercase tracking-widest shadow-lg hover:-translate-y-0.5 transition-all active:scale-[0.98]">
+                    Secure & Register
+                </button>
+
+                <button @click="cancelLogin()" class="pt-4 text-[10px] font-black text-zinc-400 hover:text-zinc-600 uppercase tracking-[0.2em] transition-colors flex items-center justify-center gap-1.5 mx-auto">
+                    Cancel Setup
+                </button>
+            </div>
+        </div>
+        
+    </div>
+</div>
 
                 <div x-show="userSession" class="animate-in fade-in duration-700 space-y-8">
                     
@@ -2262,40 +2335,40 @@ async handlePinSetup() {
                         </div>
                     </template>
 
-                    <div class="flex flex-col md:flex-row md:items-center justify-between gap-6">
-    
-    <div class="flex items-center gap-6">
-        <div class="w-24 h-24 rounded-[2rem] bg-[#0f4c81] flex items-center justify-center text-white text-4xl font-black shadow-2xl border-4 border-white shrink-0" x-text="userSession?.firstName.charAt(0)"></div>
-        <div class="space-y-1">
-            <h3 class="text-5xl font-black tracking-tighter leading-tight" x-text="'Hello ' + userSession?.firstName"></h3>
-            <p class="text-sm text-zinc-400 font-bold uppercase tracking-[0.2em]" x-text="(userSession?.role || 'Staff') + ' • ' + (userSession?.dept || 'General')"></p>
+                    <div class="bg-white p-4 md:p-5 rounded-[2rem] border border-zinc-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 relative overflow-hidden group w-full">
+    <div class="absolute right-0 top-0 w-48 h-48 bg-[#0f4c81]/5 rounded-full blur-3xl pointer-events-none"></div>
+
+    <div class="flex items-center gap-4 relative z-10 w-full md:w-auto">
+        <div class="w-16 h-16 rounded-[1.25rem] bg-[#0f4c81] flex items-center justify-center text-white text-2xl font-black shadow-md border-[3px] border-white shrink-0" x-text="userSession?.firstName.charAt(0)"></div>
+        <div class="flex flex-col">
+            <h3 class="text-2xl md:text-3xl font-black tracking-tighter text-zinc-950 leading-none" x-text="'Hello, ' + userSession?.firstName"></h3>
+            <p class="text-[10px] text-zinc-400 font-black uppercase tracking-[0.2em] mt-1.5" x-text="(userSession?.role || 'Staff') + ' • ' + (userSession?.dept || 'General')"></p>
         </div>
     </div>
-    
-<div class="flex items-center gap-2 shrink-0">
-    <button @click="showLeaveModal = true" 
-            class="group px-4 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-black transition-all shadow-[0_6px_16px_-6px_rgba(225,29,72,0.5)] hover:shadow-[0_8px_20px_-6px_rgba(225,29,72,0.6)] active:scale-95 flex items-center justify-center gap-2" 
-            title="Request Time-Off">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="transition-transform group-hover:-translate-y-[1px]">
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-            <line x1="16" y1="2" x2="16" y2="6"></line>
-            <line x1="8" y1="2" x2="8" y2="6"></line>
-            <line x1="3" y1="10" x2="21" y2="10"></line>
-        </svg>
-        <span class="hidden sm:inline text-[10px] uppercase tracking-[0.15em]">Time-Off</span>
-    </button>
 
-    <button @click="initiateLogout()" 
-            class="group px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-black text-[10px] uppercase tracking-[0.15em] transition-all shadow-[0_6px_16px_-6px_rgba(225,29,72,0.5)] hover:shadow-[0_8px_20px_-6px_rgba(225,29,72,0.6)] active:scale-95 flex items-center justify-center gap-2">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="transition-transform group-hover:translate-x-[2px]">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-            <polyline points="16 17 21 12 16 7"></polyline>
-            <line x1="21" y1="12" x2="9" y2="12"></line>
-        </svg>
-        <span>Log Out</span>
-    </button>
-</div>
+    <div class="flex items-center gap-3 relative z-10 w-full md:w-auto border-t md:border-t-0 border-zinc-100 pt-4 md:pt-0 mt-2 md:mt-0">
+        <button @click="showLeaveModal = true" 
+                class="flex-1 md:flex-none group px-5 py-3.5 bg-zinc-50 hover:bg-zinc-100 text-zinc-700 rounded-xl font-black transition-all border border-zinc-200 active:scale-95 flex items-center justify-center gap-2"
+                title="Request Time-Off">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="transition-transform group-hover:-translate-y-[1px] text-rose-500">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="16" y1="2" x2="16" y2="6"></line>
+                <line x1="8" y1="2" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
+            </svg>
+            <span class="text-[10px] uppercase tracking-[0.15em]">Time-Off</span>
+        </button>
 
+        <button @click="initiateLogout()" 
+                class="flex-1 md:flex-none group px-5 py-3.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-black text-[10px] uppercase tracking-[0.15em] transition-all shadow-[0_6px_16px_-6px_rgba(225,29,72,0.5)] hover:shadow-[0_8px_20px_-6px_rgba(225,29,72,0.6)] active:scale-95 flex items-center justify-center gap-2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="transition-transform group-hover:translate-x-[2px]">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                <polyline points="16 17 21 12 16 7"></polyline>
+                <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            <span>Log Out</span>
+        </button>
+    </div>
 </div> <div class="flex flex-col gap-6 w-full">
                        
 <!-- COMPACT ACTIVE SHIFT RECORD -->
@@ -2611,54 +2684,79 @@ async handlePinSetup() {
                                 </template>
                             </div>
                         </div>
-                        <div class="bg-gradient-to-br from-[#0f4c81] via-zinc-900 to-zinc-950 border border-[#0d406d]/30 p-8 rounded-[2rem] text-white shadow-2xl flex flex-col h-full relative overflow-hidden">
-                            <div class="absolute -right-10 -top-10 w-40 h-40 bg-[#f26522]/10 rounded-full blur-2xl"></div>
-                            <div class="flex items-center justify-between mb-6 relative z-10 shrink-0">
-                                <h5 class="text-2xl font-black tracking-tighter uppercase text-[#f26522]">Break Log</h5>
-                                <span class="px-3 py-1 bg-white/10 text-white rounded-full text-[10px] font-black tracking-widest uppercase border border-white/20" x-text="formatBreakDisplay(calculateTotalBreakMins(punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks)) + ' Total'"></span>
-                            </div>
-                            <div class="flex-1 max-h-[320px] overflow-y-auto pr-3 custom-scrollbar relative z-10 pt-2">
-                                <template x-if="!punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks || punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks.length === 0">
-                                    <div class="flex flex-col items-center justify-center h-full text-zinc-500 opacity-70 pb-4">
-                                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="mb-3"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                                        <span class="text-[10px] font-black uppercase tracking-widest text-center">No Breaks<br>Recorded Today</span>
+                        <div class="bg-white p-6 md:p-8 rounded-[2rem] border border-zinc-100 shadow-xl flex flex-col h-full relative overflow-hidden group">
+    <div class="absolute -right-20 -top-20 w-64 h-64 bg-[#f26522]/10 rounded-full blur-3xl opacity-60 group-hover:scale-110 transition-transform duration-700 pointer-events-none"></div>
+
+    <div class="flex items-center justify-between mb-8 relative z-10 shrink-0">
+        <div class="flex items-center gap-4">
+            <div class="w-14 h-14 rounded-[1.5rem] bg-[#f26522]/10 text-[#f26522] flex items-center justify-center shadow-inner border border-[#f26522]/20">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M18 8h1a4 4 0 0 1 0 8h-1"/>
+                    <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/>
+                </svg>
+            </div>
+            <div>
+                <h5 class="text-2xl font-black tracking-tighter uppercase text-zinc-950 leading-none">Break Log</h5>
+                <p class="text-[10px] font-black text-zinc-400 uppercase tracking-[0.2em] mt-1.5">Daily Downtime Tracker</p>
+            </div>
+        </div>
+        <div class="flex flex-col items-end bg-zinc-50 px-4 py-2.5 rounded-2xl border border-zinc-100 shadow-sm">
+            <span class="text-2xl font-black text-[#f26522] tabular-nums leading-none tracking-tight" x-text="formatBreakDisplay(calculateTotalBreakMins(punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks))"></span>
+            <span class="text-[9px] font-black uppercase tracking-widest text-zinc-400 mt-1">Total Break</span>
+        </div>
+    </div>
+
+    <div class="flex-1 max-h-[320px] overflow-y-auto pr-3 custom-scrollbar relative z-10">
+        
+        <template x-if="!punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks || punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks.length === 0">
+            <div class="flex flex-col items-center justify-center h-full py-12 text-center opacity-80">
+                <div class="w-20 h-20 rounded-[2rem] bg-zinc-50 border border-zinc-100 flex items-center justify-center mb-5 shadow-inner">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-zinc-400"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                </div>
+                <span class="text-xs font-black uppercase tracking-[0.15em] text-zinc-500">No Breaks<br>Recorded Today</span>
+            </div>
+        </template>
+        
+        <div class="relative pt-2" x-show="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks?.length > 0">
+            <div class="absolute left-[27px] top-6 bottom-6 w-[3px] bg-zinc-100 rounded-full"></div>
+
+            <div class="space-y-5">
+                <template x-for="(brk, index) in punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks" :key="index">
+                    <div class="relative pl-16 flex items-center group/item">
+                        
+                        <div class="absolute left-[18px] w-6 h-6 rounded-full border-[4px] border-white z-10 flex items-center justify-center transition-all duration-300 shadow-sm"
+                             :class="!brk.end ? 'bg-[#f26522] scale-125 shadow-[0_0_0_4px_rgba(242,101,34,0.15)]' : 'bg-zinc-200 group-hover/item:bg-[#f26522]/50'">
+                            <div x-show="!brk.end" class="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></div>
+                        </div>
+
+                        <div class="flex-1 bg-white border border-zinc-100 rounded-[1.5rem] p-4 shadow-sm transition-all duration-300 hover:shadow-md hover:border-[#f26522]/30">
+                            <div class="flex items-center justify-between">
+                                <div class="flex flex-col">
+                                    <div class="flex items-center gap-3 mb-1.5">
+                                        <span class="text-[10px] font-black text-zinc-400 uppercase tracking-[0.15em]" x-text="'Session ' + (index + 1).toString().padStart(2, '0')"></span>
+                                        <span x-show="!brk.end" class="px-2.5 py-0.5 bg-[#f26522]/10 text-[#f26522] rounded-md text-[8px] font-black uppercase tracking-widest animate-pulse border border-[#f26522]/20">Active</span>
+                                        <span x-show="brk.end" class="px-2.5 py-0.5 bg-zinc-100 text-zinc-500 rounded-md text-[8px] font-black uppercase tracking-widest border border-zinc-200">Completed</span>
                                     </div>
-                                </template>
+                                    <div class="flex items-center gap-3 text-zinc-800 font-black text-sm tabular-nums tracking-tight">
+                                        <span x-text="brk.start"></span>
+                                        <svg class="w-3 h-3 text-zinc-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                                        <span x-text="brk.end || '--:--'" :class="!brk.end ? 'text-[#f26522] animate-pulse' : ''"></span>
+                                    </div>
+                                </div>
                                 
-                                <div class="relative" x-show="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks?.length > 0">
-                                    <div class="absolute left-[19px] top-4 bottom-4 w-0.5 bg-white/10"></div>
-                                    <div class="space-y-4">
-                                        <template x-for="(brk, index) in punchLogs[getActiveShiftDate()]?.[userSession?.id]?.breaks" :key="index">
-                                            <div class="relative pl-12 flex items-center group">
-                                                <div class="absolute left-3 w-4 h-4 rounded-full bg-zinc-900 border-[3px] border-[#f26522] z-10 flex items-center justify-center transition-transform group-hover:scale-125" :class="!brk.end ? 'shadow-[0_0_15px_rgba(242,101,34,0.5)]' : ''">
-                                                    <div x-show="!brk.end" class="w-1.5 h-1.5 bg-[#f26522] rounded-full animate-pulse"></div>
-                                                </div>
-                                                <div class="flex-1 bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-sm transition-all hover:bg-white/10 hover:border-white/20 hover:shadow-lg">
-                                                    <div class="flex items-start justify-between">
-                                                        <div class="flex flex-col">
-                                                            <div class="flex items-center gap-2 mb-1.5">
-                                                                <span class="text-[10px] font-black text-[#f26522] uppercase tracking-widest" x-text="'Session ' + (index + 1)"></span>
-                                                                <span x-show="!brk.end" class="px-2 py-0.5 bg-[#f26522]/20 text-[#f26522] rounded-md text-[8px] font-black uppercase tracking-widest animate-pulse border border-[#f26522]/30">Active</span>
-                                                            </div>
-                                                            <div class="flex items-center gap-2 text-white font-bold text-sm">
-                                                                <span x-text="brk.start"></span>
-                                                                <svg class="w-3 h-3 text-zinc-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
-                                                                <span x-text="brk.end || '--:--'" :class="!brk.end ? 'text-[#f26522] animate-pulse' : ''"></span>
-                                                            </div>
-                                                        </div>
-                                                        <div x-show="brk.end" class="text-right flex flex-col items-end">
-                                                            <span class="text-xl font-black text-white leading-none" x-text="diffInMins(brk.start, brk.end)"></span>
-                                                            <span class="text-[9px] font-black uppercase tracking-widest text-zinc-500 mt-0.5">Mins</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </template>
-                                    </div>
+                                <div x-show="brk.end" class="text-right flex flex-col items-end pl-5 border-l border-zinc-100">
+                                    <span class="text-2xl font-black text-zinc-950 leading-none tabular-nums tracking-tighter" x-text="diffInMins(brk.start, brk.end)"></span>
+                                    <span class="text-[8px] font-black uppercase tracking-[0.2em] text-zinc-400 mt-1">Mins</span>
                                 </div>
                             </div>
                         </div>
+                        
                     </div>
+                </template>
+            </div>
+        </div>
+    </div>
+</div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="space-y-6 flex flex-col h-full">
                             <h4 class="text-xl font-black tracking-tight uppercase px-2 text-zinc-400">Detailed Absence & Exception Log</h4>
