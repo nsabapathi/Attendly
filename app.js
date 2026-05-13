@@ -66,7 +66,8 @@ window.attendanceApp = () => {
         userFailedAttempts: {},
         userLockoutUntil: {},
         idleTimeout: 5 * 60 * 1000, 
-        idleTimer: null,
+        idleInterval: null,
+        idleSecondsRemaining: 300,
 
         summaryStartDate: firstDayStr,
         summaryEndDate: lastDayStr,
@@ -867,6 +868,13 @@ window.attendanceApp = () => {
             const r = (this.userSession.role || '').toLowerCase();
             return r.includes('manager') || r.includes('lead') || r.includes('admin') || r.includes('hr');
         },
+
+        get formattedIdleTime() {
+            const mins = Math.floor(this.idleSecondsRemaining / 60).toString().padStart(2, '0');
+            const secs = (this.idleSecondsRemaining % 60).toString().padStart(2, '0');
+            return `${mins}:${secs}`;
+        },
+
         get activeTeamOnBreak() {
             if (!this.isManagerOrLead) return[];
             const activeDate = this.getActiveShiftDate();
@@ -1003,22 +1011,32 @@ window.attendanceApp = () => {
         },
 
         resetIdleTimer() {
-            if (this.idleTimer) clearTimeout(this.idleTimer);
+            if (this.idleInterval) clearInterval(this.idleInterval);
             
             const monitorAdmin = this.isAdminAuthenticated;
-            const monitorUser = this.userSession && !this.userSession.captchaEnabled && !this.userOnBreak;
+            const monitorUser = this.userSession && !this.userSession.captchaEnabled && !this.userOnBreak && !this.isManagerOrLead;
 
             if (monitorAdmin || monitorUser) {
-                this.idleTimer = setTimeout(() => { 
-                    if (this.isAdminAuthenticated) { 
-                        this.logoutAdmin(); 
-                        this.showNote("Vault auto-locked due to inactivity", "error"); 
+                this.idleSecondsRemaining = this.idleTimeout / 1000;
+                
+                this.idleInterval = setInterval(() => {
+                    this.idleSecondsRemaining--;
+                    
+                    if (this.idleSecondsRemaining <= 0) {
+                        clearInterval(this.idleInterval);
+                        
+                        if (this.isAdminAuthenticated) { 
+                            this.logoutAdmin(); 
+                            this.showNote("Vault auto-locked due to inactivity", "error"); 
+                        }
+                        if (this.userSession && !this.userSession.captchaEnabled && !this.userOnBreak && !this.isManagerOrLead) {
+                            this.logoutUser(); 
+                            this.showNote("Session expired due to inactivity", "error");
+                        }
                     }
-                    if (this.userSession && !this.userSession.captchaEnabled && !this.userOnBreak) {
-                        this.logoutUser(); 
-                        this.showNote("Session expired due to inactivity", "error");
-                    }
-                }, this.idleTimeout); 
+                }, 1000); 
+            } else {
+                this.idleSecondsRemaining = this.idleTimeout / 1000;
             }
         },
 
@@ -1663,7 +1681,7 @@ window.attendanceApp = () => {
         logoutAdmin() { 
             this.isAdminAuthenticated = false; 
             this.view = 'portal'; 
-            if(this.idleTimer) clearTimeout(this.idleTimer); 
+            if(this.idleInterval) clearInterval(this.idleInterval); 
 
             if (this.userSyncChannel) {
                 this.supabase.removeChannel(this.userSyncChannel);
