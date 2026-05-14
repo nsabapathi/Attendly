@@ -140,7 +140,7 @@
     
     <div class="flex items-center bg-zinc-900/5 p-1 rounded-full border border-zinc-900/10 overflow-x-auto no-scrollbar mx-auto">
         <template x-for="item in menuItems" :key="item.id">
-            <button x-show="!item.admin || isManagerOrLead || members.length === 0" 
+            <button x-show="!item.admin || isManagerOrLead" 
                     @click="view = item.id; resetMemberForm()" 
                     :class="view === item.id ? 'bg-white text-zinc-950 shadow-md' : 'text-zinc-500 hover:text-zinc-900'" 
                     class="px-4 py-2 rounded-full transition-all font-black text-[12px] flex items-center gap-2 whitespace-nowrap">
@@ -163,7 +163,7 @@
 </nav>
 
     <main class="flex-1 flex flex-col overflow-hidden relative">
-        <header class="shrink-0 px-4 md:px-10 pt-4 md:pt-6 pb-4 flex flex-col gap-4 no-print z-[1000] relative">
+        <header class="shrink-0 px-4 md:px-10 pt-2 md:pt-3 pb-2 flex flex-col gap-4 no-print z-[1000] relative">
             <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <h2 class="text-3xl md:text-5xl font-black text-zinc-950 tracking-tighter capitalize" x-text="view === 'master' ? 'Master Config' : (view === 'portal' ? '' : (view === 'summary' ? 'Reports' : view))"></h2>
                 <div class="flex flex-col sm:flex-row items-center gap-4 w-full lg:w-auto" x-show="view !== 'import' && view !== 'portal' && view !== 'master' && isAdminAuthenticated">
@@ -181,7 +181,7 @@
 
         <div class="flex-1 overflow-y-auto px-4 md:px-10 pb-16 custom-scrollbar">
             
-            <div x-show="view === 'portal'" class="w-full py-6 space-y-8">
+            <div x-show="view === 'portal'" class="w-full py-2 space-y-6">
 
                 <div x-show="!userSession" class="max-w-md mx-auto relative group animate-in slide-in-from-bottom">
                     <div class="absolute inset-0 bg-gradient-to-r from-[#0f4c81] to-[#f26522] rounded-[2.5rem] blur opacity-20 group-hover:opacity-30 transition duration-500"></div>
@@ -380,6 +380,7 @@
                         <span class="text-[8px] font-black uppercase tracking-[0.15em] text-zinc-400">In</span>
                         <span class="text-lg font-black text-emerald-600 tabular-nums leading-none mt-0.5"
                               x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in || '--:--'"></span>
+                        <span class="text-[8px] text-zinc-400 mt-1 uppercase" x-show="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in_ip" x-text="'IP: ' + punchLogs[getActiveShiftDate()]?.[userSession?.id]?.in_ip"></span>
                     </div>
                 </div>
 
@@ -394,6 +395,7 @@
                         <span class="text-[8px] font-black uppercase tracking-[0.15em] text-zinc-400">Out</span>
                         <span class="text-lg font-black text-rose-600 tabular-nums leading-none mt-0.5"
                               x-text="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out || '--:--'"></span>
+                        <span class="text-[8px] text-zinc-400 mt-1 uppercase" x-show="punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out_ip" x-text="'IP: ' + punchLogs[getActiveShiftDate()]?.[userSession?.id]?.out_ip"></span>
                     </div>
                 </div>
 
@@ -767,7 +769,7 @@
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="9 18 15 12 9 6"/></svg>
     </button>
 </div>
-            </div> </div> <template x-if="menuItems.find(i => i.id === view)?.admin">
+            </div> </div> <template x-if="menuItems.find(i => i.id === view)?.admin && isManagerOrLead">
                 <div class="space-y-8 pb-10">
                     <div x-show="!isAdminAuthenticated" class="max-w-md mx-auto py-16 space-y-6 animate-in fade-in relative group">
                         <div class="absolute inset-0 bg-gradient-to-r from-zinc-900 to-zinc-800 rounded-[2.5rem] blur opacity-10 group-hover:opacity-20 transition duration-500"></div>
@@ -898,6 +900,7 @@
                                                            @blur="isEditingLog = false"
                                                            class="bg-transparent text-center font-black text-xs outline-none w-full rounded" 
                                                            :class="(editingLogId === m.id ? tempPunches.in : punchLogs[currentDate]?.[m.id]?.in) ? 'text-emerald-700' : 'text-zinc-400', editingLogId === m.id ? 'cursor-pointer hover:bg-zinc-100' : 'cursor-not-allowed'">
+                                                    <span class="text-[8px] font-black text-zinc-400 mt-1 truncate w-full px-1 text-center" x-text="punchLogs[currentDate]?.[m.id]?.in_ip ? ('IP: ' + punchLogs[currentDate]?.[m.id]?.in_ip) : ''"></span>
                                                 </div>
                                                 
                                                 <div @click="adminToggleBreak(m.id)" 
@@ -924,6 +927,7 @@
                                                            @blur="isEditingLog = false"
                                                            class="bg-transparent text-center font-black text-xs outline-none w-full rounded" 
                                                            :class="(editingLogId === m.id ? tempPunches.out : punchLogs[currentDate]?.[m.id]?.out) ? 'text-rose-700' : 'text-zinc-400', editingLogId === m.id ? 'cursor-pointer hover:bg-zinc-100' : 'cursor-not-allowed'">
+                                                    <span class="text-[8px] font-black text-zinc-400 mt-1 truncate w-full px-1 text-center" x-text="punchLogs[currentDate]?.[m.id]?.out_ip ? ('IP: ' + punchLogs[currentDate]?.[m.id]?.out_ip) : ''"></span>
                                                 </div>
                                             </div>
 
@@ -1024,8 +1028,9 @@
                                                                     <span class="text-[9px] font-black uppercase tracking-widest" :class="cap.status === 'Passed' ? 'text-emerald-600' : (cap.status === 'Pending' ? 'text-amber-600' : 'text-rose-600')" x-text="'Check ' + (cIdx + 1)"></span>
                                                                     <span class="text-[9px] font-black px-2 py-0.5 rounded-md" :class="cap.status === 'Passed' ? 'text-emerald-700 bg-emerald-100' : (cap.status === 'Pending' ? 'text-amber-700 bg-amber-100 animate-pulse' : 'text-rose-700 bg-rose-100')" x-text="cap.status"></span>
                                                                 </div>
-                                                                <div class="px-4 py-3 flex items-center justify-center gap-3 text-xs font-bold text-zinc-700">
+                                                                <div class="px-4 py-3 flex flex-col items-center justify-center text-xs font-bold text-zinc-700">
                                                                     <span x-text="cap.time"></span>
+                                                                    <span class="text-[8px] text-zinc-400 mt-1" x-show="cap.ip" x-text="'IP: ' + cap.ip"></span>
                                                                 </div>
                                                             </div>
                                                         </template>
