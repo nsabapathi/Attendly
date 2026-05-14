@@ -157,10 +157,7 @@ window.attendanceApp = () => {
             this.userSession = null;
             this.supabase = supabase.createClient(this.supabaseUrl, this.supabaseKey);
 
-            // Fetch the configuration first (We need the members list to restore sessions properly)
             await this.syncInitialConfig();
-
-            // Try to restore session from Supabase Auth
             await this.restoreSession();
 
             const todayRef = getISTDateObject();
@@ -236,9 +233,7 @@ window.attendanceApp = () => {
                         this.setupUserRealtime();
                         this.syncUserData(true);
                     } else {
-                        // Find user by auth_id in our local hydrated array or fetch directly
                         let matchedMember = this.members.find(m => m.auth_id === session.user.id);
-                        
                         if (!matchedMember) {
                             const { data: dbMember } = await this.supabase.from('members').select('*').eq('auth_id', session.user.id).single();
                             if (dbMember) {
@@ -262,23 +257,63 @@ window.attendanceApp = () => {
                             this.setupUserRealtime();
                             this.syncUserData(true);
                         } else {
-                            // Session exists but member is deleted/unlinked
                             await this.supabase.auth.signOut();
                         }
                     }
                 }
-            } catch (e) {
-                console.error("Session restore failed", e);
-            }
+            } catch (e) { console.error("Session restore failed", e); }
         },
 
-        async fetchIP() {
+        async fetchDeviceAndNetworkInfo() {
+            // 1. Detect OS and Version from User Agent
+            const ua = navigator.userAgent;
+            let os = "Unknown OS";
+            
+            if (ua.indexOf("Win") !== -1) {
+                if (/Windows NT 10.0/.test(ua)) os = "Windows 10/11";
+                else if (/Windows NT 6.2/.test(ua)) os = "Windows 8";
+                else if (/Windows NT 6.1/.test(ua)) os = "Windows 7";
+                else os = "Windows";
+            } else if (ua.indexOf("Mac") !== -1) {
+                if (/Mac OS X (\d+[._]\d+[._]?\d*)/.test(ua)) {
+                    os = "MacOS " + ua.match(/Mac OS X (\d+[._]\d+[._]?\d*)/)[1].replace(/_/g, '.');
+                } else os = "MacOS";
+            } else if (/Android/.test(ua)) {
+                if (/Android (\d+(\.\d+)?)/.test(ua)) {
+                    os = "Android " + ua.match(/Android (\d+(\.\d+)?)/)[1];
+                } else os = "Android";
+            } else if (/iPhone|iPad|iPod/.test(ua)) {
+                if (/OS (\d+)_(\d+)_?(\d+)?/.test(ua)) {
+                    const match = ua.match(/OS (\d+)_(\d+)_?(\d+)?/);
+                    os = `iOS ${match[1]}.${match[2]}`;
+                } else os = "iOS";
+            } else if (ua.indexOf("Linux") !== -1) {
+                os = "Linux";
+            }
+
+            // 2. Fetch IP and Geolocation
             try {
-                const res = await fetch('https://api.ipify.org?format=json');
+                // Using ipapi.co for geolocation (supports https out of the box)
+                const res = await fetch('https://ipapi.co/json/');
                 const data = await res.json();
-                return data.ip;
+                
+                let locationTag = "";
+                // If the country code exists and is NOT the United States, flag it
+                if (data.country_code && data.country_code !== 'US') {
+                    locationTag = ` [🚨 Outside US: ${data.country_name}]`;
+                }
+
+                // Returns a bundled string: "192.168.1.1 [🚨 Outside US: Canada] | OS: MacOS 10.15.7"
+                return `${data.ip}${locationTag} | OS: ${os}`;
             } catch (e) {
-                return 'Unknown IP';
+                // Fallback to basic IP if the geolocation API fails or hits rate limits
+                try {
+                    const fbRes = await fetch('https://api.ipify.org?format=json');
+                    const fbData = await fbRes.json();
+                    return `${fbData.ip} | OS: ${os}`;
+                } catch (err) {
+                    return `Unknown IP | OS: ${os}`;
+                }
             }
         },
 
@@ -862,7 +897,7 @@ window.attendanceApp = () => {
             const activeDate = this.getActiveShiftDate();
             const uId = this.userSession.id;
             const checkTime = timeOverride || this.currentCaptchaTime || this.getCurrentTimeIST();
-            const currentIp = await this.fetchIP();
+            const currentIp = await this.fetchDeviceAndNetworkInfo();
             
             if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
             if (!this.punchLogs[activeDate][uId]) this.punchLogs[activeDate][uId] = { in: '', out: '', in_ip: '', out_ip: '', breaks: [], captchas: [] };
@@ -893,7 +928,7 @@ window.attendanceApp = () => {
         async forceCaptcha(mId) {
             if (!this.isAdminAuthenticated && !this.isManagerOrLead) return;
             const checkTime = this.getCurrentTimeIST();
-            const currentIp = await this.fetchIP();
+            const currentIp = await this.fetchDeviceAndNetworkInfo();
             
             const todayStr = getISTString();
             
@@ -1446,12 +1481,10 @@ window.attendanceApp = () => {
                 if (this.filterName && m.id !== this.filterName) return false;
                 if (this.filterDept && m.dept !== this.filterDept) return false;
                 
-                // Hide from active daily logs and dashboards if their exit date is before the currently viewed date
                 if (this.view === 'record' || this.view === 'dashboard') {
                     if (m.doe && m.doe < this.currentDate) return false;
                 }
                 
-                // Hide from reports if they exited before the report's start date
                 if (this.view === 'summary') {
                     if (m.doe && m.doe < this.summaryStartDate) return false;
                 }
@@ -1539,7 +1572,7 @@ window.attendanceApp = () => {
         async markPortalAttendance(s) {
             if (!this.userSession) return;
             const activeDate = this.getActiveShiftDate(), uId = this.userSession.id;
-            const currentIp = await this.fetchIP();
+            const currentIp = await this.fetchDeviceAndNetworkInfo();
 
             if (!this.attendanceData[activeDate]) this.attendanceData[activeDate] = {};
             this.attendanceData[activeDate][uId] = s;
@@ -1570,7 +1603,7 @@ window.attendanceApp = () => {
             const breaks = this.punchLogs[activeDate][uId].breaks;
             if (breaks?.length > 0 && !breaks[breaks.length - 1].end) breaks[breaks.length - 1].end = this.logoutTimePreview;
             
-            const currentIp = await this.fetchIP();
+            const currentIp = await this.fetchDeviceAndNetworkInfo();
             this.punchLogs[activeDate][uId].out = this.logoutTimePreview;
             this.punchLogs[activeDate][uId].out_ip = currentIp;
             
@@ -1687,7 +1720,7 @@ window.attendanceApp = () => {
                 this.showNote("Window closed during verification. Penalty applied.", "error");
                 
                 let penaltyTime = pendingCaptchas[0].time;
-                const currentIp = await this.fetchIP();
+                const currentIp = await this.fetchDeviceAndNetworkInfo();
                 
                 for (const cap of pendingCaptchas) {
                     cap.status = 'Missed';
@@ -1709,7 +1742,7 @@ window.attendanceApp = () => {
             const alreadyOnBreak = reopenLog?.breaks?.length > 0 && !reopenLog.breaks[reopenLog.breaks.length - 1].end;
             if (this.userSession.captchaEnabled && reopenLog?.in && !reopenLog?.out && !alreadyOnBreak) {
                 const missedTime = this.getCurrentTimeIST();
-                const currentIp = await this.fetchIP();
+                const currentIp = await this.fetchDeviceAndNetworkInfo();
                 
                 if (!this.punchLogs[trapDate][uid].captchas) this.punchLogs[trapDate][uid].captchas = [];
                 this.punchLogs[trapDate][uid].captchas.push({ time: missedTime, status: 'Missed', ip: currentIp });
@@ -1735,7 +1768,7 @@ window.attendanceApp = () => {
             if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
             
             if (!this.punchLogs[activeDate][uId] || !this.punchLogs[activeDate][uId].in) {
-                const currentIp = await this.fetchIP();
+                const currentIp = await this.fetchDeviceAndNetworkInfo();
                 this.punchLogs[activeDate][uId] = { 
                     in: this.getCurrentTimeIST(), out: '', 
                     in_ip: currentIp, out_ip: '', 
@@ -1796,7 +1829,7 @@ window.attendanceApp = () => {
                         this.showNote("Window closed during verification. Penalty applied.", "error");
                         
                         let penaltyTime = setupPendingCaptchas[0].time;
-                        const currentIp = await this.fetchIP();
+                        const currentIp = await this.fetchDeviceAndNetworkInfo();
                         
                         for (const cap of setupPendingCaptchas) {
                             cap.status = 'Missed';
@@ -1821,7 +1854,7 @@ window.attendanceApp = () => {
 
                     if (!this.punchLogs[activeDate]) this.punchLogs[activeDate] = {};
                     if (!this.punchLogs[activeDate][uId] || !this.punchLogs[activeDate][uId].in) {
-                        const currentIp = await this.fetchIP();
+                        const currentIp = await this.fetchDeviceAndNetworkInfo();
                         this.punchLogs[activeDate][uId] = { 
                             in: this.getCurrentTimeIST(), out: '', 
                             in_ip: currentIp, out_ip: '', 
@@ -1853,7 +1886,6 @@ window.attendanceApp = () => {
         async verifyAdmin() { 
             if (Date.now() < this.adminLockoutUntil) { this.adminPinInput = ''; return this.showNote(`Vault locked.`, "error"); }
             if (this.adminPinInput === this.masterPin) { 
-                // Login Master Admin via Auth to bypass RLS
                 let { data: authData, error: authError } = await this.supabase.auth.signInWithPassword({
                     email: 'master@revcentric.local',
                     password: this.adminPinInput
@@ -1897,7 +1929,6 @@ window.attendanceApp = () => {
             if (this.newPinValue.length === 6) { 
                 this.masterPin = this.newPinValue; 
                 this.upsertConfigCloud('master_pin', this.masterPin); 
-                // Note: Changing Master Pin will require updating the Auth password too if we want it fully synced
                 this.newPinValue = ''; this.showNote("Master PIN Updated", "success"); 
             } else this.showNote("PIN must be 6 digits", "error");
         },
@@ -2047,8 +2078,57 @@ window.attendanceApp = () => {
             });
             if (detailedRows.length === 0) return this.showNote("No data", "error");
             const wb = XLSX.utils.book_new(), ws = XLSX.utils.json_to_sheet(detailedRows);
-            ws['!cols'] = [{wch: 12}, {wch: 10}, {wch: 20}, {wch: 15}, {wch: 15}, {wch: 12}, {wch: 10}, {wch: 15}, {wch: 10}, {wch: 15}, {wch: 18}, {wch: 18}, {wch: 15}, {wch: 30}];
+            ws['!cols'] = [{wch: 12}, {wch: 10}, {wch: 20}, {wch: 15}, {wch: 15}, {wch: 12}, {wch: 10}, {wch: 35}, {wch: 10}, {wch: 35}, {wch: 18}, {wch: 18}, {wch: 15}, {wch: 30}];
             XLSX.utils.book_append_sheet(wb, ws, "Detailed_Logs"); XLSX.writeFile(wb, `Detailed_Log_Report_${this.summaryStartDate}_to_${this.summaryEndDate}.xlsx`); this.showNote("Report Downloaded", "success");
+        },
+
+        exportSecurityAuditExcel() {
+            if (!this.summaryStartDate || !this.summaryEndDate) return this.showNote("Invalid date range", "error");
+            const sDate = new Date(this.summaryStartDate), eDate = new Date(this.summaryEndDate), auditRows = [];
+            
+            const parseNetworkString = (str) => {
+                if (!str) return { ip: 'N/A', geo: 'US/Unknown', os: 'N/A' };
+                let ip = str.split(' | ')[0] || 'N/A';
+                let os = str.split(' | OS: ')[1] || 'N/A';
+                let geo = 'US (Assumed)';
+                if (ip.includes('[🚨 Outside US:')) {
+                    const match = ip.match(/\[🚨 Outside US: (.*?)\]/);
+                    if (match) geo = match[1];
+                    ip = ip.replace(/ \[🚨 Outside US: .*?\]/, '');
+                }
+                return { ip: ip.trim(), geo: geo.trim(), os: os.trim() };
+            };
+
+            this.filteredMembers.forEach(m => {
+                for (let d = new Date(sDate); d <= eDate; d.setDate(d.getDate() + 1)) {
+                    const dateStr = getISTString(d);
+                    const punchLog = this.punchLogs[dateStr]?.[m.id];
+                    if (!punchLog) continue;
+
+                    if (punchLog.in && punchLog.in_ip) {
+                        const parsedIn = parseNetworkString(punchLog.in_ip);
+                        auditRows.push({ 'Date': dateStr, 'Emp ID': m.empId, 'Name': m.name, 'Event': 'Punch In', 'Time': punchLog.in, 'IP Address': parsedIn.ip, 'Location': parsedIn.geo, 'Operating System': parsedIn.os });
+                    }
+                    if (punchLog.out && punchLog.out_ip) {
+                        const parsedOut = parseNetworkString(punchLog.out_ip);
+                        auditRows.push({ 'Date': dateStr, 'Emp ID': m.empId, 'Name': m.name, 'Event': 'Punch Out', 'Time': punchLog.out, 'IP Address': parsedOut.ip, 'Location': parsedOut.geo, 'Operating System': parsedOut.os });
+                    }
+                    if (punchLog.captchas && punchLog.captchas.length > 0) {
+                        punchLog.captchas.forEach(cap => {
+                            const parsedCap = parseNetworkString(cap.ip);
+                            auditRows.push({ 'Date': dateStr, 'Emp ID': m.empId, 'Name': m.name, 'Event': `Captcha (${cap.status})`, 'Time': cap.time, 'IP Address': parsedCap.ip, 'Location': parsedCap.geo, 'Operating System': parsedCap.os });
+                        });
+                    }
+                }
+            });
+
+            if (auditRows.length === 0) return this.showNote("No security data found in range", "error");
+            
+            const wb = XLSX.utils.book_new(), ws = XLSX.utils.json_to_sheet(auditRows);
+            ws['!cols'] = [{wch: 12}, {wch: 10}, {wch: 25}, {wch: 18}, {wch: 12}, {wch: 18}, {wch: 18}, {wch: 25}];
+            XLSX.utils.book_append_sheet(wb, ws, "Security_Audit"); 
+            XLSX.writeFile(wb, `Security_Device_Audit_${this.summaryStartDate}_to_${this.summaryEndDate}.xlsx`); 
+            this.showNote("Security Audit Downloaded", "success");
         },
 
         exportRosterExcel() {
@@ -2153,6 +2233,43 @@ window.attendanceApp = () => {
                 'Applicable Department': h.dept 
             }));
             XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(holidayRows), "Holiday_Calendar");
+            
+            // SHEET 6: Device & Security Log
+            const securityRows = [];
+            const parseNetworkString = (str) => {
+                if (!str) return { ip: 'N/A', geo: 'US/Unknown', os: 'N/A' };
+                let ip = str.split(' | ')[0] || 'N/A';
+                let os = str.split(' | OS: ')[1] || 'N/A';
+                let geo = 'US (Assumed)';
+                if (ip.includes('[🚨 Outside US:')) {
+                    const match = ip.match(/\[🚨 Outside US: (.*?)\]/);
+                    if (match) geo = match[1];
+                    ip = ip.replace(/ \[🚨 Outside US: .*?\]/, '');
+                }
+                return { ip: ip.trim(), geo: geo.trim(), os: os.trim() };
+            };
+            Object.keys(this.punchLogs).sort().forEach(date => {
+                Object.keys(this.punchLogs[date]).forEach(empId => { 
+                    const log = this.punchLogs[date][empId]; 
+                    const mName = this.members.find(m => m.id === empId)?.name || 'Unknown';
+                    
+                    if (log.in && log.in_ip) {
+                        const parsedIn = parseNetworkString(log.in_ip);
+                        securityRows.push({ 'Date': date, 'Emp ID': empId, 'Name': mName, 'Event': 'Punch In', 'Time': log.in, 'IP Address': parsedIn.ip, 'Location': parsedIn.geo, 'OS': parsedIn.os });
+                    }
+                    if (log.out && log.out_ip) {
+                        const parsedOut = parseNetworkString(log.out_ip);
+                        securityRows.push({ 'Date': date, 'Emp ID': empId, 'Name': mName, 'Event': 'Punch Out', 'Time': log.out, 'IP Address': parsedOut.ip, 'Location': parsedOut.geo, 'OS': parsedOut.os });
+                    }
+                    if (log.captchas && log.captchas.length > 0) {
+                        log.captchas.forEach(cap => {
+                            const parsedCap = parseNetworkString(cap.ip);
+                            securityRows.push({ 'Date': date, 'Emp ID': empId, 'Name': mName, 'Event': `Captcha (${cap.status})`, 'Time': cap.time, 'IP Address': parsedCap.ip, 'Location': parsedCap.geo, 'OS': parsedCap.os });
+                        });
+                    }
+                }); 
+            });
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(securityRows), "Security_Audit");
 
             // Generate and Download
             const fileName = `RevCentric_System_Export_${isAuto ? 'Automated' : 'Manual'}_${getISTString()}.xlsx`;
