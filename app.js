@@ -354,8 +354,15 @@ handleRealtimePayload(payload) {
             if (table === 'members' && eventType === 'UPDATE') {
                 if (this.userSession && newRec.id === this.userSession.id) {
                     if (newRec.current_session && newRec.current_session !== this.localSessionToken) {
+                        
+                        // Show the error message
                         this.showNote("Session Terminated: Logged in from another device.", "error");
-                        this.logoutUser();
+                        
+                        // Wait 2.5 seconds so they can read it, then execute the hard wipe
+                        setTimeout(() => {
+                            this.logoutUser();
+                        }, 2500); 
+                        
                         return;
                     }
                 }
@@ -1708,7 +1715,7 @@ handleRealtimePayload(payload) {
             this.userSession.auth_id = authData.user.id; 
 
             // NEW: GENERATE AND SAVE SESSION TOKEN
-            this.localSessionToken = this.generateSecureId();
+            this.localSessionToken = generateSecureId(); // <-- FIXED (Removed "this.")
             await this.supabase.from('members')
                 .update({ current_session: this.localSessionToken })
                 .eq('id', uid);
@@ -1822,11 +1829,11 @@ handleRealtimePayload(payload) {
                     this.userSession = JSON.parse(JSON.stringify(this.members[idx])); 
                     this.userSession.auth_id = authData.user.id;
 
-                    // NEW: GENERATE AND SAVE SESSION TOKEN
-                    this.localSessionToken = this.generateSecureId();
-                    await this.supabase.from('members')
-                        .update({ current_session: this.localSessionToken })
-                        .eq('id', uid);
+                   // NEW: GENERATE AND SAVE SESSION TOKEN
+            this.localSessionToken = generateSecureId(); // <-- FIXED
+            await this.supabase.from('members')
+                .update({ current_session: this.localSessionToken })
+                .eq('id', uid);
 
                     this.setupUserRealtime();
                     await this.syncUserData(true); 
@@ -1894,17 +1901,33 @@ handleRealtimePayload(payload) {
         },
 
         async logoutUser() { 
+            // 1. Clear all running timers and local state
             this.clearCaptchaTimers(); 
             this.currentCaptchaTime = null; 
             this.userSession = null; 
-            this.localSessionToken = null; // Clear local token
+            this.localSessionToken = null; 
+            
             if (this.userSyncChannel) {
                 this.supabase.removeChannel(this.userSyncChannel);
                 this.userSyncChannel = null;
             } 
+            
             this.loginStep = 'id'; 
-            await this.supabase.auth.signOut();
-            setTimeout(() => document.getElementById('login-id-input')?.focus(), 50); 
+            
+            // 2. Tell Supabase to invalidate the session on the server
+            try {
+                await this.supabase.auth.signOut();
+            } catch(e) {
+                console.warn("Supabase signout skipped or failed:", e);
+            }
+
+            // 3. NUCLEAR OPTION: Destroy all local storage to prevent ghost sessions
+            localStorage.clear();
+            sessionStorage.clear();
+
+            // 4. Reload the page to clear the Javascript memory completely 
+            // (This ensures the next user sees a 100% fresh login screen)
+            window.location.reload(); 
         },
 
         cancelLogin() { this.loginStep = 'id'; this.tempUser = null; this.loginIdInput = ''; this.loginPinInput = ''; setTimeout(() => document.getElementById('login-id-input')?.focus(), 50); },
