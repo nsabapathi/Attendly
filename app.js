@@ -329,6 +329,8 @@ window.attendanceApp = () => {
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'punch_logs' }, p => this.handleRealtimePayload(p))
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'break_logs' }, p => this.handleRealtimePayload(p))
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'captcha_logs' }, p => this.handleRealtimePayload(p))
+                    // ADDED: Managers now listen to member updates so their kill-switch works too
+                    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'members' }, p => this.handleRealtimePayload(p))
                     .subscribe();
             } 
             else {
@@ -338,23 +340,24 @@ window.attendanceApp = () => {
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'punch_logs', filter: `member_id=eq.${myId}` }, p => this.handleRealtimePayload(p))
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'break_logs', filter: `member_id=eq.${myId}` }, p => this.handleRealtimePayload(p))
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'captcha_logs', filter: `member_id=eq.${myId}` }, p => this.handleRealtimePayload(p))
-                    // ADDED: Listener to detect if session token gets overwritten by a new login
                     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'members', filter: `id=eq.${myId}` }, p => this.handleRealtimePayload(p))
                     .subscribe();
             }
         },
 
-        handleRealtimePayload(payload) {
+handleRealtimePayload(payload) {
             if (this.isEditingLog || this.isAddingMember) return;
 
             const { table, eventType, new: newRec, old: oldRec } = payload;
 
-            // ADDED: Auto-Kill Switch Logic
+            // FIXED: Ensure the update is for the CURRENTLY logged-in user before checking the token
             if (table === 'members' && eventType === 'UPDATE') {
-                if (newRec.current_session && newRec.current_session !== this.localSessionToken) {
-                    this.showNote("Session Terminated: Logged in from another device.", "error");
-                    this.logoutUser();
-                    return;
+                if (this.userSession && newRec.id === this.userSession.id) {
+                    if (newRec.current_session && newRec.current_session !== this.localSessionToken) {
+                        this.showNote("Session Terminated: Logged in from another device.", "error");
+                        this.logoutUser();
+                        return;
+                    }
                 }
             }
 
