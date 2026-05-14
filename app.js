@@ -246,13 +246,18 @@ window.attendanceApp = () => {
                                     id: dbMember.id, empId: dbMember.emp_id, firstName: dbMember.first_name, lastName: dbMember.last_name,
                                     name: `${dbMember.first_name} ${dbMember.last_name || ''}`.trim(),
                                     dept: dbMember.dept, role: dbMember.role, shift: dbMember.shift, pin: dbMember.pin,
-                                    doj: dbMember.doj, dob: dbMember.dob, allowedPL: dbMember.allowed_pl, allowedSL: dbMember.allowed_sl, 
+                                    doj: dbMember.doj, doe: dbMember.doe, dob: dbMember.dob, allowedPL: dbMember.allowed_pl, allowedSL: dbMember.allowed_sl, 
                                     allowedPerm: dbMember.allowed_perm, captchaEnabled: dbMember.captcha_enabled, auth_id: dbMember.auth_id
                                 };
                             }
                         }
 
                         if (matchedMember) {
+                            const todayStr = getISTString();
+                            if (matchedMember.doe && matchedMember.doe < todayStr) {
+                                await this.supabase.auth.signOut();
+                                return;
+                            }
                             this.userSession = JSON.parse(JSON.stringify(matchedMember));
                             this.setupUserRealtime();
                             this.syncUserData(true);
@@ -403,7 +408,7 @@ window.attendanceApp = () => {
                 const payload = {
                     id: m.id, emp_id: m.empId, first_name: m.firstName, last_name: m.lastName,
                     dept: m.dept, role: m.role, shift: m.shift, pin: m.pin,
-                    doj: m.doj || null, dob: m.dob || null,
+                    doj: m.doj || null, doe: m.doe || null, dob: m.dob || null,
                     allowed_pl: m.allowedPL, allowed_sl: m.allowedSL, allowed_perm: m.allowedPerm,
                     captcha_enabled: m.captchaEnabled
                 };
@@ -508,7 +513,7 @@ window.attendanceApp = () => {
                         id: m.id, empId: m.emp_id, firstName: m.first_name, lastName: m.last_name,
                         name: `${m.first_name} ${m.last_name || ''}`.trim(),
                         dept: m.dept, role: m.role, shift: m.shift, pin: m.pin,
-                        doj: m.doj, dob: m.dob, allowedPL: m.allowed_pl, allowedSL: m.allowed_sl, 
+                        doj: m.doj, doe: m.doe, dob: m.dob, allowedPL: m.allowed_pl, allowedSL: m.allowed_sl, 
                         allowedPerm: m.allowed_perm, captchaEnabled: m.captcha_enabled, auth_id: m.auth_id
                     }));
                     this.members.sort((a, b) => a.empId.localeCompare(b.empId, undefined, { numeric: true, sensitivity: 'base' }));
@@ -1429,9 +1434,30 @@ window.attendanceApp = () => {
                 return y === ist.getFullYear();
             });
         },
-        get availablePersonnelOptions() { return this.filterDept ? this.members.filter(m => m.dept === this.filterDept) : this.members; },
+
+        get availablePersonnelOptions() { 
+            const today = getISTString();
+            const activeOnly = this.members.filter(m => !m.doe || m.doe >= today);
+            return this.filterDept ? activeOnly.filter(m => m.dept === this.filterDept) : activeOnly; 
+        },
+
         get filteredMembers() { 
-            return this.members.filter(m => (!this.filterName || m.id === this.filterName) && (!this.filterDept || m.dept === this.filterDept)); 
+            return this.members.filter(m => {
+                if (this.filterName && m.id !== this.filterName) return false;
+                if (this.filterDept && m.dept !== this.filterDept) return false;
+                
+                // Hide from active daily logs and dashboards if their exit date is before the currently viewed date
+                if (this.view === 'record' || this.view === 'dashboard') {
+                    if (m.doe && m.doe < this.currentDate) return false;
+                }
+                
+                // Hide from reports if they exited before the report's start date
+                if (this.view === 'summary') {
+                    if (m.doe && m.doe < this.summaryStartDate) return false;
+                }
+                
+                return true;
+            }); 
         },
 
         handleNameFilterChange() { if (this.filterName) this.filterDept = this.members.find(m => m.id === this.filterName)?.dept; },
@@ -1566,6 +1592,11 @@ window.attendanceApp = () => {
         handleIdEntry() { 
             const found = this.members.find(m => m.empId.trim().toUpperCase() === this.loginIdInput.trim().toUpperCase()); 
             if (found) {
+                const todayStr = getISTString();
+                if (found.doe && found.doe < todayStr) {
+                    this.loginIdInput = '';
+                    return this.showNote("Access Denied: Account Deactivated", "error");
+                }
                 this.tempUser = JSON.parse(JSON.stringify(found));
                 this.loginStep = !found.pin ? 'setup' : 'pin';
                 if ("Notification" in window && Notification.permission === "default") {
