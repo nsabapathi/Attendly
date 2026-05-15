@@ -59,6 +59,7 @@ window.attendanceApp = () => {
         chatMessages: [],
         newChatMessage: '',
         chatTarget: 'All', 
+        unreadMessages: 0,
 
         captchaTimer: null,
         captchaTimeoutTimer: null,
@@ -414,7 +415,10 @@ window.attendanceApp = () => {
                     if ("Notification" in window && Notification.permission === "granted" && !this.showChatPanel) {
                         new Notification("New Team Message", { body: `${msg.sender_name}: ${msg.message}` });
                     }
-                    if (!this.showChatPanel) this.showNote(`New message from ${msg.sender_name}`);
+                    if (!this.showChatPanel) {
+                        this.showNote(`New message from ${msg.sender_name}`);
+                        this.unreadMessages++;
+                    }
                 }
             };
 
@@ -2301,9 +2305,10 @@ window.attendanceApp = () => {
             this.showNote("Roster Report Downloaded", "success");
         },
 
-        executeFullSystemExport(isAuto = false) { 
+        async executeFullSystemExport(isAuto = false) { 
             if (!this.members || this.members.length === 0) return this.showNote("No data available to export", "error");
 
+            this.showNote("Compiling System Export...", "success");
             const wb = XLSX.utils.book_new(); 
 
             // SHEET 1: Personnel Master List
@@ -2418,6 +2423,21 @@ window.attendanceApp = () => {
                 }); 
             });
             XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(securityRows), "Security_Audit");
+
+            // SHEET 7: Team Messages
+            try {
+                const { data: allMessages } = await this.supabase.from('team_messages').select('*').order('created_at', { ascending: false });
+                if (allMessages && allMessages.length > 0) {
+                    const msgRows = allMessages.map(m => ({
+                        'Date & Time': new Date(m.created_at).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }),
+                        'Sender ID': m.sender_id,
+                        'Sender Name': m.sender_name,
+                        'Target Audience': m.target_audience,
+                        'Message': m.message
+                    }));
+                    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(msgRows), "Team_Messages");
+                }
+            } catch(e) { console.error("Error fetching messages for export", e); }
 
             // Generate and Download
             const fileName = `RevCentric_System_Export_${isAuto ? 'Automated' : 'Manual'}_${getISTString()}.xlsx`;
