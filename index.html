@@ -312,9 +312,9 @@
 
                         <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white/70 backdrop-blur-xl border border-zinc-200/50 p-4 rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.06)] w-full panel-glow">
                             <div class="flex items-center gap-4">
-                                <img :src="`https://api.dicebear.com/7.x/adventurer-neutral/svg?seed=${userSession?.id}-${new Date().toDateString()}`" 
-         alt="Daily Avatar" 
-         class="w-14 h-14 rounded-2xl bg-[#0f4c81]/10 border border-[#0f4c81]/20 shadow-sm shrink-0 object-cover" />
+                                <img :src="`https://api.dicebear.com/7.x/avataaars/svg?seed=${userSession?.id}-${new Date().toDateString()}`" 
+     alt="Daily Avatar" 
+     class="w-14 h-14 rounded-2xl bg-[#0f4c81]/10 border border-[#0f4c81]/20 shadow-sm shrink-0 object-cover" />
                                 <div class="space-y-0.5">
                                     <h3 class="text-2xl font-black tracking-tighter leading-none text-zinc-950" x-text="'Hello ' + userSession?.firstName"></h3>
                                     <p class="text-[10px] md:text-xs text-zinc-500 font-bold uppercase tracking-[0.1em]" x-text="(userSession?.role || 'Staff') + ' • ' + (userSession?.dept || 'General')"></p>
