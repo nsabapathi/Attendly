@@ -747,30 +747,43 @@ window.attendanceApp = () => {
         },
 
         clearCaptchaTimers() {
-            if (this.captchaTimer) { clearTimeout(this.captchaTimer); this.captchaTimer = null; }
-            if (this.captchaTimeoutTimer) { clearTimeout(this.captchaTimeoutTimer); this.captchaTimeoutTimer = null; }
+    if (this.captchaTimer) { clearTimeout(this.captchaTimer); this.captchaTimer = null; }
+    if (this.captchaTimeoutTimer) { clearTimeout(this.captchaTimeoutTimer); this.captchaTimeoutTimer = null; }
 
-            if (this._captchaAudio) {
-                try { this._captchaAudio.pause(); this._captchaAudio.currentTime = 0; } catch(e) {}
-                this._captchaAudio = null;
-            }
+    // NEW: Remove dangling event listeners
+    if (this._unlockAudioHandler) {
+        document.removeEventListener('click', this._unlockAudioHandler);
+        document.removeEventListener('keydown', this._unlockAudioHandler);
+        this._unlockAudioHandler = null;
+    }
 
-            try { if (navigator.vibrate) navigator.vibrate(0); } catch(e) {}
+    if (this._captchaAudio) {
+        try { 
+            // NEW: Mute immediately to kill sound during the play() promise race condition
+            this._captchaAudio.muted = true; 
+            this._captchaAudio.pause(); 
+            this._captchaAudio.currentTime = 0; 
+            this._captchaAudio.removeAttribute('src'); // Force memory cleanup
+        } catch(e) {}
+        this._captchaAudio = null;
+    }
 
-            if (this._captchaVisibilityHandler) {
-                document.removeEventListener('visibilitychange', this._captchaVisibilityHandler);
-                window.removeEventListener('focus', this._captchaVisibilityHandler);
-                this._captchaVisibilityHandler = null;
-            }
+    try { if (navigator.vibrate) navigator.vibrate(0); } catch(e) {}
 
-            try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch(e) {}
+    if (this._captchaVisibilityHandler) {
+        document.removeEventListener('visibilitychange', this._captchaVisibilityHandler);
+        window.removeEventListener('focus', this._captchaVisibilityHandler);
+        this._captchaVisibilityHandler = null;
+    }
 
-            if (this.titleFlashInterval) {
-                clearInterval(this.titleFlashInterval);
-                this.titleFlashInterval = null;
-                document.title = "RevCentric Solutions";
-            }
-        },
+    try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); } catch(e) {}
+
+    if (this.titleFlashInterval) {
+        clearInterval(this.titleFlashInterval);
+        this.titleFlashInterval = null;
+        document.title = "RevCentric Solutions";
+    }
+},
 
         scheduleNextCaptcha() {
             this.clearCaptchaTimers();
@@ -789,21 +802,23 @@ window.attendanceApp = () => {
             }, interval);
         },
 
-        triggerCaptcha(forceTime = null) {
-            this.checkExpiredCaptchas();
-            
-            if (!this.userSession) return;
-            
-            if (!forceTime && !this.userSession.captchaEnabled) return;
-            if (!forceTime && this.userOnBreak) return;
-            
-            const _guardDate = this.getActiveShiftDate();
-            const _guardLog = this.punchLogs[_guardDate]?.[this.userSession.id];
-            if (!forceTime && (!_guardLog?.in || _guardLog?.out)) return;
+triggerCaptcha(forceTime = null) {
+    // NEW: Clear any existing captchas/audio before spawning a new one
+    this.clearCaptchaTimers();
 
-            this.captchaTargetNumber = Math.floor(Math.random() * 10).toString();
-            this.captchaInput = '';
-            this.showCaptchaModal = true;
+    this.checkExpiredCaptchas();
+    
+    if (!this.userSession) return;
+    if (!forceTime && !this.userSession.captchaEnabled) return;
+    if (!forceTime && this.userOnBreak) return;
+    
+    const _guardDate = this.getActiveShiftDate();
+    const _guardLog = this.punchLogs[_guardDate]?.[this.userSession.id];
+    if (!forceTime && (!_guardLog?.in || _guardLog?.out)) return;
+
+    this.captchaTargetNumber = Math.floor(Math.random() * 10).toString();
+    this.captchaInput = '';
+    this.showCaptchaModal = true;
 
             if (forceTime) {
                 this.currentCaptchaTime = forceTime;
@@ -833,19 +848,31 @@ window.attendanceApp = () => {
                 else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
             } catch(e) {}
 
+            // REWRITTEN AUDIO BLOCK
             try {
                 this._captchaAudio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
                 this._captchaAudio.loop = true;
                 this._captchaAudio.volume = 1.0;
-                this._captchaAudio.play().catch(() => {
-                    const unlockAudio = () => {
-                        this._captchaAudio?.play().catch(() => {});
-                        document.removeEventListener('click', unlockAudio);
-                        document.removeEventListener('keydown', unlockAudio);
-                    };
-                    document.addEventListener('click', unlockAudio, { once: true });
-                    document.addEventListener('keydown', unlockAudio, { once: true });
-                });
+
+                // Save reference to handler so it can be cleaned up later by clearCaptchaTimers()
+                this._unlockAudioHandler = () => {
+                    if (this._captchaAudio) {
+                        this._captchaAudio.play().catch(() => {});
+                    }
+                    // Self-clean upon interaction
+                    document.removeEventListener('click', this._unlockAudioHandler);
+                    document.removeEventListener('keydown', this._unlockAudioHandler);
+                    this._unlockAudioHandler = null;
+                };
+
+                const playPromise = this._captchaAudio.play();
+                if (playPromise !== undefined) {
+                    playPromise.catch(() => {
+                        // Autoplay blocked. Attach fallback listeners to Document using the saved handler.
+                        document.addEventListener('click', this._unlockAudioHandler, { once: true });
+                        document.addEventListener('keydown', this._unlockAudioHandler, { once: true });
+                    });
+                }
             } catch(e) {}
 
             try {
