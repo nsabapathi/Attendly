@@ -253,6 +253,7 @@ window.attendanceApp = () => {
                             this.userSession = JSON.parse(JSON.stringify(matchedMember));
                             this.setupUserRealtime();
                             this.syncUserData(true);
+			    await this.fetchExceptionHistory();	
                         } else {
                             await this.supabase.auth.signOut();
                         }
@@ -578,6 +579,24 @@ window.attendanceApp = () => {
                 this.syncError = true;
             } finally {
                 this.isSyncing = false;
+            }
+        },
+
+	async fetchExceptionHistory() {
+            if (!this.userSession) return;
+            
+            const { data: excData } = await this.supabase
+                .from('member_exceptions_view')
+                .select('date, status')
+                .eq('member_id', this.userSession.id)
+                .order('date', { ascending: false });
+
+            if (excData) {
+                this.userExceptionHistory = excData.map(log => ({
+                    date: log.date,
+                    label: this.formatDate(log.date),
+                    status: this.statusOptions.find(s => s.id === log.status)
+                }));
             }
         },
 
